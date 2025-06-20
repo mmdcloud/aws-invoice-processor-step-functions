@@ -25,6 +25,140 @@ module "data_storage_failure_topic" {
 }
 
 # -----------------------------------------------------------------------------------------
+# VPC Configuration
+# -----------------------------------------------------------------------------------------
+
+module "vpc" {
+  source                = "./modules/vpc/vpc"
+  vpc_name              = "vpc"
+  vpc_cidr_block        = "10.0.0.0/16"
+  enable_dns_hostnames  = true
+  enable_dns_support    = true
+  internet_gateway_name = "vpc_igw"
+}
+
+# Security Group
+module "redshift_security_group" {
+  source = "./modules/vpc/security_groups"
+  vpc_id = module.vpc.vpc_id
+  name   = "redshift-security-group"
+  ingress = [
+    {
+      from_port       = 5439
+      to_port         = 5439
+      protocol        = "tcp"
+      self            = "false"
+      cidr_blocks     = ["0.0.0.0/0"]
+      security_groups = []
+      description     = "any"
+    }
+  ]
+  egress = [
+    {
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  ]
+}
+
+# Public Subnets
+module "public_subnets" {
+  source = "./modules/vpc/subnets"
+  name   = "public-subnet"
+  subnets = [
+    {
+      subnet = "10.0.1.0/24"
+      az     = "us-east-1a"
+    },
+    {
+      subnet = "10.0.2.0/24"
+      az     = "us-east-1b"
+    },
+    {
+      subnet = "10.0.3.0/24"
+      az     = "us-east-1c"
+    }
+  ]
+  vpc_id                  = module.vpc.vpc_id
+  map_public_ip_on_launch = true
+}
+
+# Private Subnets
+module "private_subnets" {
+  source = "./modules/vpc/subnets"
+  name   = "private-subnet"
+  subnets = [
+    {
+      subnet = "10.0.6.0/24"
+      az     = "us-east-1d"
+    },
+    {
+      subnet = "10.0.5.0/24"
+      az     = "us-east-1e"
+    },
+    {
+      subnet = "10.0.4.0/24"
+      az     = "us-east-1f"
+    }
+  ]
+  vpc_id                  = module.vpc.vpc_id
+  map_public_ip_on_launch = false
+}
+
+# Public Route Table
+module "public_rt" {
+  source  = "./modules/vpc/route_tables"
+  name    = "public-route-table"
+  subnets = module.public_subnets.subnets[*]
+  routes = [
+    {
+      cidr_block         = "0.0.0.0/0"
+      gateway_id         = module.vpc.igw_id
+      nat_gateway_id     = ""
+      transit_gateway_id = ""
+    }
+  ]
+  vpc_id = module.vpc.vpc_id
+}
+
+# Private Route Table
+module "private_rt" {
+  source  = "./modules/vpc/route_tables"
+  name    = "private-route-table"
+  subnets = module.private_subnets.subnets[*]
+  routes  = []
+  vpc_id  = module.vpc.vpc_id
+}
+
+# -----------------------------------------------------------------------------------------
+# Redshift Configuration
+# -----------------------------------------------------------------------------------------
+module "redshift_serverless" {
+  source              = "./modules/redshift"
+  namespace_name      = "invoice-processing-namespace"
+  admin_username      = "admin"
+  admin_user_password = "AdminPassword123!"
+  db_name             = "invoice_db"
+  workgroups = [
+    {
+      workgroup_name      = "invoice-processing-workgroup"
+      base_capacity       = 128
+      publicly_accessible = false
+      subnet_ids          = module.private_subnets.subnets[*].id
+      security_group_ids  = [module.redshift_security_group.id]
+      config_parameters = [
+        {
+          parameter_key   = "enable_user_activity_logging"
+          parameter_value = "true"
+        }
+      ]
+    }
+  ]
+}
+
+# -----------------------------------------------------------------------------------------
 # S3 Configuration
 # -----------------------------------------------------------------------------------------
 
@@ -104,7 +238,7 @@ module "step_function" {
   definition = <<EOF
       {
         "Comment": "Invoice processing workflow",
-        "StartAt": "CompleteMultipartUpload",
+        "StartAt": "Validate Table Information",
         "States": {          
           "Validate Table Information": {
             "Type": "Task",
@@ -197,18 +331,7 @@ module "step_function" {
         },
         "QueryLanguage": "JSONata"
       }
-    EOF 
-  # jsonencode({
-  #   Comment = "A simple AWS Step Functions state machine that processes invoices",
-  #   StartAt = "ProcessInvoice",
-  #   States = {
-  #     ProcessInvoice = {
-  #       Type = "Task",
-  #       Resource = "arn:aws:lambda:us-east-1:123456789012:function:ProcessInvoiceFunction",
-  #       End = true
-  #     }
-  #   }
-  # })
+    EOF
 }
 
 # -----------------------------------------------------------------------------------------
