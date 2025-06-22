@@ -1,84 +1,93 @@
 import json
 import boto3
 
-def lambda_handler(event, context):
-    # Initialize Textract client
-    textract = boto3.client('textract')
-    
-    # Get S3 bucket and file from the event (triggered by S3 upload)
-    s3_bucket = event['Records'][0]['s3']['bucket']['name']
-    s3_key = event['Records'][0]['s3']['object']['key']
-    
-    # Call Textract to detect tables
-    response = textract.analyze_document(
-        Document={
-            'S3Object': {
-                'Bucket': s3_bucket,
-                'Name': s3_key
-            }
-        },
-        FeatureTypes=["TABLES"]  # Focus only on tables
-    )
-    
-    # Process the response
-    tables = extract_tables(response)
-    table_count = len(tables)
-    tables_with_headers = validate_headers(tables)
-    
-    return {
-        'statusCode': 200,
-        'body': json.dumps({
-            'table_count': table_count,
-            'tables_with_headers': tables_with_headers,
-            'document': f's3://{s3_bucket}/{s3_key}'
-        })
-    }
+def lambda_handler(event, context):    
+    # Initialize clients
+    textract = boto3.client('textract', region_name='us-east-1')
+    s3 = boto3.client('s3', region_name='us-east-1')
 
-def extract_tables(textract_response):
+    try:
+        # Get bucket and key from event
+        s3_bucket = event['Records'][0]['s3']['bucket']['name']
+        s3_key = event['Records'][0]['s3']['object']['key']
+        print(s3_bucket)
+        print(s3_key)
+        # Verify object exists (added this check)
+        s3.head_object(Bucket=s3_bucket, Key=s3_key)
+        
+        # Call Textract - FIXED: Changed 'Name' to 'Key'
+        response = textract.analyze_document(
+            Document={
+                'S3Object': {
+                    'Bucket': s3_bucket,
+                    'Name': s3_key  # This was the main error - was 'Name'
+                }
+            },
+            FeatureTypes=["TABLES"]
+        )
+        print(response['Blocks'])
+        # Process response
+        blocks = response['Blocks']
+        tables = extract_tables(blocks)
+        table_count = len(tables)
+        tables_with_headers = validate_headers(tables, blocks)
+        print(table_count)
+        print(tables_with_headers)
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'table_count': table_count,
+                'tables_with_headers': tables_with_headers,
+                'document': f's3://{s3_bucket}/{s3_key}'
+            })
+        }
+        
+    except Exception as e:
+        print(e)
+        return {
+            'statusCode': 500,
+            'body': json.dumps({
+                'error': str(e),
+                'event': event
+            })
+        }
+
+def extract_tables(blocks):
     """Extract all tables from Textract response."""
-    tables = []
-    blocks = textract_response['Blocks']
-    
-    for block in blocks:
-        if block['BlockType'] == 'TABLE':
-            tables.append(block)
-    
-    return tables
+    return [block for block in blocks if block['BlockType'] == 'TABLE']
 
-def validate_headers(tables):
-    """Check if each table has valid headers (non-empty first row)."""
+def validate_headers(tables, blocks):
+    """Check if each table has valid headers."""
     results = []
-    blocks = textract_response['Blocks']  # Reuse blocks from the response
     
     for table in tables:
         table_id = table['Id']
-        # Get all cells in this table
-        cells = [b for b in blocks if b.get('BlockType') == 'CELL' and b.get('Relationships')]
-        # Filter cells belonging to this table
-        table_cells = [c for c in cells if any(rel['Ids'][0] == table_id for rel in c.get('Relationships', []))]
+        # Get cells belonging to this table
+        table_cells = [
+            b for b in blocks 
+            if b.get('BlockType') == 'CELL' 
+            and any(rel['Ids'][0] == table_id for rel in b.get('Relationships', []))
+        ]
         
         # Group cells by row
         rows = {}
         for cell in table_cells:
-            row_index = cell['RowIndex']
-            if row_index not in rows:
-                rows[row_index] = []
-            rows[row_index].append(cell)
+            rows.setdefault(cell['RowIndex'], []).append(cell)
         
-        # Check if the first row exists and has non-empty cells
+        # Check first row
         has_header = False
+        first_row_text = []
+        
         if 1 in rows:  # RowIndex starts at 1
-            first_row_cells = rows[1]
-            first_row_text = []
-            for cell in first_row_cells:
-                # Extract text from cell (linked WORD blocks)
+            for cell in rows[1]:
                 cell_text = []
                 for rel in cell.get('Relationships', []):
                     if rel['Type'] == 'CHILD':
-                        for word_id in rel['Ids']:
-                            word_block = next((b for b in blocks if b['Id'] == word_id and b['BlockType'] == 'WORD'), None)
-                            if word_block:
-                                cell_text.append(word_block['Text'])
+                        cell_text.extend(
+                            b['Text'] for b in blocks 
+                            if b['Id'] in rel['Ids'] 
+                            and b['BlockType'] == 'WORD'
+                        )
                 first_row_text.append(' '.join(cell_text).strip())
             
             has_header = any(text for text in first_row_text)

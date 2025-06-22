@@ -2,34 +2,48 @@ import json
 import boto3
 
 def lambda_handler(event, context):
-    # Initialize Textract client
-    textract = boto3.client('textract')
-    
-    # Get S3 bucket and file from the event (triggered by S3 upload)
-    s3_bucket = event['Records'][0]['s3']['bucket']['name']
-    s3_key = event['Records'][0]['s3']['object']['key']
-    
-    # Call Textract to detect tables
-    response = textract.analyze_document(
-        Document={
-            'S3Object': {
-                'Bucket': s3_bucket,
-                'Name': s3_key
-            }
-        },
-        FeatureTypes=["TABLES"]  # Only extract tables
-    )
-    
-    # Process the response to extract table data
-    tables = extract_table_data(response)
-    
-    return {
-        'statusCode': 200,
-        'body': json.dumps({
-            'tables': tables,
-            'document': f's3://{s3_bucket}/{s3_key}'
-        })
-    }
+    try:
+        # Initialize clients
+        textract = boto3.client('textract', region_name='us-east-1')
+        s3 = boto3.client('s3', region_name='us-east-1')
+        
+        # Get S3 bucket and file from the event (triggered by S3 upload)
+        s3_bucket = event['Records'][0]['s3']['bucket']['name']
+        s3_key = event['Records'][0]['s3']['object']['key']
+        
+        # Verify object exists (added this check)
+        s3.head_object(Bucket=s3_bucket, Key=s3_key)
+        
+        # Call Textract to detect tables
+        response = textract.analyze_document(
+            Document={
+                'S3Object': {
+                    'Bucket': s3_bucket,
+                    'Name': s3_key
+                }
+            },
+            FeatureTypes=["TABLES"]  # Only extract tables
+        )
+        
+        # Process the response to extract table data
+        tables = extract_table_data(response)
+        print(tables)
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'tables': tables,
+                'document': f's3://{s3_bucket}/{s3_key}'
+            })
+        }
+    except Exception as e:
+        print(e)
+        return {
+            'statusCode': 500,
+            'body': json.dumps({
+                'error': str(e),
+                'event': event
+            })
+        }
 
 def extract_table_data(textract_response):
     """Extracts and structures table data from Textract response."""

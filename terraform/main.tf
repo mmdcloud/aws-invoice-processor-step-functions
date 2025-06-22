@@ -394,7 +394,24 @@ module "lambda_function_iam_role" {
                 ],
                 "Resource": "arn:aws:logs:*:*:*",
                 "Effect": "Allow"
-            }            
+            },
+            {
+                "Effect": "Allow",
+                "Action": [
+                    "textract:AnalyzeDocument"
+                ],
+                "Resource": "*"
+            },
+            {
+                "Effect": "Allow",
+                "Action": [
+                    "s3:*"
+                ],
+                "Resource": [
+                    "${module.invoices_bucket.arn}",
+                    "${module.invoices_bucket.arn}/*",
+                ]
+            }
         ]
     }
     EOF
