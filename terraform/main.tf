@@ -135,27 +135,52 @@ module "private_rt" {
 # -----------------------------------------------------------------------------------------
 # Redshift Configuration
 # -----------------------------------------------------------------------------------------
-module "redshift_serverless" {
-  source              = "./modules/redshift"
-  namespace_name      = "invoice-processing-namespace"
-  admin_username      = "admin"
-  admin_user_password = "AdminPassword123!"
-  db_name             = "invoice_db"
-  workgroups = [
+# module "redshift_serverless" {
+#   source              = "./modules/redshift"
+#   namespace_name      = "invoice-processing-namespace"
+#   admin_username      = "admin"
+#   admin_user_password = "AdminPassword123!"
+#   db_name             = "invoice_db"
+#   workgroups = [
+#     {
+#       workgroup_name      = "invoice-processing-workgroup"
+#       base_capacity       = 128
+#       publicly_accessible = false
+#       subnet_ids          = module.private_subnets.subnets[*].id
+#       security_group_ids  = [module.redshift_security_group.id]
+#       config_parameters = [
+#         {
+#           parameter_key   = "enable_user_activity_logging"
+#           parameter_value = "true"
+#         }
+#       ]
+#     }
+#   ]
+# }
+
+# -----------------------------------------------------------------------------------------
+# DynamoDb Configuration
+# -----------------------------------------------------------------------------------------
+module "mediaconvert_dynamodb" {
+  source = "./modules/dynamodb"
+  name   = "invoice-records"
+  attributes = [
     {
-      workgroup_name      = "invoice-processing-workgroup"
-      base_capacity       = 128
-      publicly_accessible = false
-      subnet_ids          = module.private_subnets.subnets[*].id
-      security_group_ids  = [module.redshift_security_group.id]
-      config_parameters = [
-        {
-          parameter_key   = "enable_user_activity_logging"
-          parameter_value = "true"
-        }
-      ]
+      name = "RecordId"
+      type = "S"
+    },
+    {
+      name = "filename"
+      type = "S"
     }
   ]
+  billing_mode          = "PROVISIONED"
+  hash_key              = "RecordId"
+  range_key             = "filename"
+  read_capacity         = 20
+  write_capacity        = 20
+  ttl_attribute_name    = "TimeToExist"
+  ttl_attribute_enabled = true
 }
 
 # -----------------------------------------------------------------------------------------
@@ -296,6 +321,44 @@ module "document_event_queue" {
   })
 }
 
+module "step_function_iam_role" {
+  source             = "./modules/iam"
+  role_name          = "step_function_iam_role"
+  role_description   = "step_function_iam_role"
+  policy_name        = "step_function_iam_policy"
+  policy_description = "step_function_iam_policy"
+  assume_role_policy = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": "sts:AssumeRole",
+                "Principal": {
+                  "Service": "states.amazonaws.com"
+                },
+                "Effect": "Allow",
+                "Sid": ""
+            }
+        ]
+    }
+    EOF
+  policy             = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": [
+                  "logs:CreateLogGroup",
+                  "logs:CreateLogStream",
+                  "logs:PutLogEvents"
+                ],
+                "Resource": "arn:aws:logs:*:*:*",
+                "Effect": "Allow"
+            }
+        ]
+    }
+    EOF
+}
 # -----------------------------------------------------------------------------------------
 # Step Function Configuration
 # -----------------------------------------------------------------------------------------
@@ -303,19 +366,19 @@ module "document_event_queue" {
 module "step_function" {
   source     = "./modules/step-function"
   name       = "InvoiceProcessingWorkflow"
-  role_arn   = ""
+  role_arn   = module.step_function_iam_role.arn
   definition = <<EOF
       {
         "Comment": "Invoice processing workflow",
         "StartAt": "Validate Table Information",
-        "States": {          
+        "States": {
           "Validate Table Information": {
             "Type": "Task",
             "Resource": "${module.table_sanity_check_function.arn}",
-            "Output": "{% $states.result.Payload %}",
-            "Arguments": {
+            "OutputPath": "$.Payload",
+            "Parameters": {
               "FunctionName": "",
-              "Payload": "{% $states.input %}"
+              "Payload.$": "$"
             },
             "Retry": [
               {
@@ -337,6 +400,8 @@ module "step_function" {
             "Type": "Choice",
             "Choices": [
               {
+                "Variable": "$.validationResult",
+                "BooleanEquals": false,
                 "Next": "Error : Invalid invoice"
               }
             ],
@@ -344,9 +409,10 @@ module "step_function" {
           },
           "Error : Invalid invoice": {
             "Type": "Task",
-            "Resource": "${module.invalid_invoice_error_topic.topic_arn}",
-            "Arguments": {
-              "Message": "{% $states.input %}"
+            "Resource": "arn:aws:states:::sns:publish",
+            "Parameters": {
+              "TopicArn": "${module.invalid_invoice_error_topic.topic_arn}",
+              "Message.$": "$"
             },
             "Next": "Fail"
           },
@@ -356,10 +422,10 @@ module "step_function" {
           "Store data into Redshift": {
             "Type": "Task",
             "Resource": "${module.extract_table_data_function.arn}",
-            "Output": "{% $states.result.Payload %}",
-            "Arguments": {
+            "OutputPath": "$.Payload",
+            "Parameters": {
               "FunctionName": "",
-              "Payload": "{% $states.input %}"
+              "Payload.$": "$"
             },
             "Retry": [
               {
@@ -381,6 +447,8 @@ module "step_function" {
             "Type": "Choice",
             "Choices": [
               {
+                "Variable": "$.storageResult",
+                "BooleanEquals": false,
                 "Next": "Error: Failure while storing data"
               }
             ],
@@ -388,17 +456,17 @@ module "step_function" {
           },
           "Error: Failure while storing data": {
             "Type": "Task",
-            "Resource": "${module.data_storage_failure_topic.topic_arn}",
-            "Arguments": {
-              "Message": "{% $states.input %}"
+            "Resource": "arn:aws:states:::sns:publish",
+            "Parameters": {
+              "TopicArn": "${module.data_storage_failure_topic.topic_arn}",
+              "Message.$": "$"
             },
             "Next": "Fail"
           },
           "Success": {
             "Type": "Succeed"
           }
-        },
-        "QueryLanguage": "JSONata"
+        }
       }
     EOF
 }
@@ -408,22 +476,22 @@ module "step_function" {
 # -----------------------------------------------------------------------------------------
 
 # S3 upload event rule to trigger a Step Function
-module "s3_upload_event_rule" {
-  source           = "./modules/eventbridge"
-  rule_name        = "s3-upload-event-rule"
-  rule_description = "Rule for S3 Upload Events"
-  event_pattern = jsonencode({
-    source = [
-      "aws.s3"
-    ]
-    detail-type = [
-      "PutObject",
-      "CompleteMultipartUpload"
-    ]
-  })
-  target_id  = "TriggerStepFunction"
-  target_arn = module.step_function.arn
-}
+# module "s3_upload_event_rule" {
+#   source           = "./modules/eventbridge"
+#   rule_name        = "s3-upload-event-rule"
+#   rule_description = "Rule for S3 Upload Events"
+#   event_pattern = jsonencode({
+#     source = [
+#       "aws.s3"
+#     ]
+#     detail-type = [
+#       "PutObject",
+#       "CompleteMultipartUpload"
+#     ]
+#   })
+#   target_id  = "TriggerStepFunction"
+#   target_arn = module.step_function.arn
+# }
 
 # -----------------------------------------------------------------------------------------
 # Lambda Configuration
@@ -569,7 +637,7 @@ module "extract_table_data_function" {
 
 module "start_step_function_lambda" {
   source        = "./modules/lambda"
-  function_name = "extract-table-data"
+  function_name = "start-step-function"
   role_arn      = module.start_step_function_iam_role.arn
   permissions   = []
   env_variables = {}
