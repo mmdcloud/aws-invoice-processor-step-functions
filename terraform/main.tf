@@ -178,7 +178,12 @@ module "invoices_bucket" {
   bucket_policy = ""
   force_destroy = true
   bucket_notification = {
-    queue           = []
+    queue = [
+      {
+        queue_arn = module.document_event_queue.arn
+        events    = ["s3:ObjectCreated:*"]
+      }
+    ]
     lambda_function = []
   }
 }
@@ -225,6 +230,70 @@ module "table_sanity_check_function_code" {
   ]
   versioning_enabled = "Enabled"
   force_destroy      = true
+}
+
+module "start_step_function_code" {
+  source      = "./modules/s3"
+  bucket_name = "startstepfunctionmadmax"
+  objects = [
+    {
+      key    = "start_step_function.zip"
+      source = "./files/start_step_function.zip"
+    }
+  ]
+  bucket_policy = ""
+  cors = [
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["GET"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
+    }
+  ]
+  versioning_enabled = "Enabled"
+  force_destroy      = true
+}
+
+# -----------------------------------------------------------------------------------------
+# SQS Config
+# -----------------------------------------------------------------------------------------
+
+resource "aws_lambda_event_source_mapping" "document_event_queue_trigger" {
+  event_source_arn                   = module.document_event_queue.arn
+  function_name                      = module.start_step_function_lambda.arn
+  enabled                            = true
+  batch_size                         = 10
+  maximum_batching_window_in_seconds = 60
+}
+
+# SQS Queue for buffering S3 events
+module "document_event_queue" {
+  source                        = "./modules/sqs"
+  queue_name                    = "document-event-queue"
+  delay_seconds                 = 0
+  maxReceiveCount               = 3
+  dlq_message_retention_seconds = 86400
+  dlq_name                      = "document-event-dlq"
+  max_message_size              = 262144
+  message_retention_seconds     = 345600
+  visibility_timeout_seconds    = 180
+  receive_wait_time_seconds     = 20
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { Service = "s3.amazonaws.com" }
+        Action    = "sqs:SendMessage"
+        Resource  = "arn:aws:sqs:us-east-1:*:document-event-queue"
+        Condition = {
+          ArnEquals = {
+            "aws:SourceArn" = module.invoices_bucket.arn
+          }
+        }
+      }
+    ]
+  })
 }
 
 # -----------------------------------------------------------------------------------------
@@ -409,9 +478,64 @@ module "lambda_function_iam_role" {
                 ],
                 "Resource": [
                     "${module.invoices_bucket.arn}",
-                    "${module.invoices_bucket.arn}/*",
+                    "${module.invoices_bucket.arn}/*"
                 ]
             }
+        ]
+    }
+    EOF
+}
+
+module "start_step_function_iam_role" {
+  source             = "./modules/iam"
+  role_name          = "start_step_function_iam_role"
+  role_description   = "start_step_function_iam_role"
+  policy_name        = "start_step_function_iam_policy"
+  policy_description = "start_step_function_iam_policy"
+  assume_role_policy = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": "sts:AssumeRole",
+                "Principal": {
+                  "Service": "lambda.amazonaws.com"
+                },
+                "Effect": "Allow",
+                "Sid": ""
+            }
+        ]
+    }
+    EOF
+  policy             = <<EOF
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": [
+                  "logs:CreateLogGroup",
+                  "logs:CreateLogStream",
+                  "logs:PutLogEvents"
+                ],
+                "Resource": "arn:aws:logs:*:*:*",
+                "Effect": "Allow"
+            },
+            {
+                "Effect": "Allow",
+                "Action": [
+                    "sqs:DeleteMessage",
+                    "sqs:GetQueueAttributes",
+                    "sqs:ReceiveMessage"
+                ],
+                "Resource": "${module.document_event_queue.arn}"
+            },
+            {
+                "Effect": "Allow",
+                "Action": [
+                    "states:StartExecution"
+                ],
+                "Resource": "${module.step_function.arn}"
+            },
         ]
     }
     EOF
@@ -427,6 +551,7 @@ module "table_sanity_check_function" {
   runtime       = "python3.12"
   s3_bucket     = module.table_sanity_check_function_code.bucket
   s3_key        = "table_sanity_check.zip"
+  depends_on    = [module.table_sanity_check_function_code]
 }
 
 module "extract_table_data_function" {
@@ -439,4 +564,18 @@ module "extract_table_data_function" {
   runtime       = "python3.12"
   s3_bucket     = module.extract_table_data_function_code.bucket
   s3_key        = "extract_table_data.zip"
+  depends_on    = [module.extract_table_data_function_code]
+}
+
+module "start_step_function_lambda" {
+  source        = "./modules/lambda"
+  function_name = "extract-table-data"
+  role_arn      = module.start_step_function_iam_role.arn
+  permissions   = []
+  env_variables = {}
+  handler       = "start_step_function.lambda_handler"
+  runtime       = "python3.12"
+  s3_bucket     = module.start_step_function_code.bucket
+  s3_key        = "start_step_function.zip"
+  depends_on    = [module.start_step_function_code]
 }
