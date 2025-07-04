@@ -6,6 +6,9 @@ variable "handler" {}
 variable "runtime" {}
 variable "s3_bucket" {}
 variable "s3_key" {}
+variable "timeout" {
+  default = 60
+}
 variable "env_variables" {
   type = map(string)
 }

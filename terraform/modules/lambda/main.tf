@@ -4,6 +4,7 @@ resource "aws_lambda_function" "function" {
   role          = var.role_arn
   handler       = var.handler
   runtime       = var.runtime
+  timeout = var.timeout
   s3_bucket     = var.s3_bucket
   s3_key        = var.s3_key
   environment {

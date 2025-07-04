@@ -1,12 +1,14 @@
 import json
 import boto3
 
+
+# Initialize clients
+textract = boto3.client('textract', region_name='us-east-1')
+s3 = boto3.client('s3', region_name='us-east-1')
+
 def lambda_handler(event, context):
     try:
-        # Initialize clients
-        textract = boto3.client('textract', region_name='us-east-1')
-        s3 = boto3.client('s3', region_name='us-east-1')
-        
+        print(f"event: ${event}")
         # Get S3 bucket and file from the event (triggered by S3 upload)
         s3_bucket = event['Records'][0]['s3']['bucket']['name']
         s3_key = event['Records'][0]['s3']['object']['key']
@@ -30,6 +32,7 @@ def lambda_handler(event, context):
         print(tables)
         return {
             'statusCode': 200,
+            'state':'success',
             'body': json.dumps({
                 'tables': tables,
                 'document': f's3://{s3_bucket}/{s3_key}'
@@ -39,6 +42,7 @@ def lambda_handler(event, context):
         print(e)
         return {
             'statusCode': 500,
+            'state':'fail',
             'body': json.dumps({
                 'error': str(e),
                 'event': event

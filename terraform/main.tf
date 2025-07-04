@@ -1,3 +1,7 @@
+resource "random_id" "id" {
+  byte_length = 8
+}
+
 # -----------------------------------------------------------------------------------------
 # SNS Configuration
 # -----------------------------------------------------------------------------------------
@@ -189,7 +193,7 @@ module "mediaconvert_dynamodb" {
 
 module "invoices_bucket" {
   source             = "./modules/s3"
-  bucket_name        = "invoicesbucketmadmax"
+  bucket_name        = "invoices-${random_id.id.hex}"
   objects            = []
   versioning_enabled = "Enabled"
   cors = [
@@ -215,7 +219,7 @@ module "invoices_bucket" {
 
 module "extract_table_data_function_code" {
   source      = "./modules/s3"
-  bucket_name = "extracttabledatamadmax"
+  bucket_name = "extract-table-data-source-code--${random_id.id.hex}"
   objects = [
     {
       key    = "extract_table_data.zip"
@@ -237,7 +241,7 @@ module "extract_table_data_function_code" {
 
 module "table_sanity_check_function_code" {
   source      = "./modules/s3"
-  bucket_name = "tablesanitycheckmadmax"
+  bucket_name = "table-sanity-check-source-code--${random_id.id.hex}"
   objects = [
     {
       key    = "table_sanity_check.zip"
@@ -259,7 +263,7 @@ module "table_sanity_check_function_code" {
 
 module "start_step_function_code" {
   source      = "./modules/s3"
-  bucket_name = "startstepfunctionmadmax"
+  bucket_name = "start-step-function-source-code--${random_id.id.hex}"
   objects = [
     {
       key    = "start_step_function.zip"
@@ -310,7 +314,7 @@ module "document_event_queue" {
         Effect    = "Allow"
         Principal = { Service = "s3.amazonaws.com" }
         Action    = "sqs:SendMessage"
-        Resource  = "arn:aws:sqs:us-east-1:*:document-event-queue"
+        Resource  = "arn:aws:sqs:${var.region}:*:document-event-queue"
         Condition = {
           ArnEquals = {
             "aws:SourceArn" = module.invoices_bucket.arn
@@ -348,12 +352,23 @@ module "step_function_iam_role" {
         "Statement": [
             {
                 "Action": [
-                  "logs:CreateLogGroup",
-                  "logs:CreateLogStream",
-                  "logs:PutLogEvents"
+                  "lambda:InvokeFunction"
                 ],
-                "Resource": "arn:aws:logs:*:*:*",
+                "Resource": [
+                    "${module.table_sanity_check_function.arn}",
+                    "${module.extract_table_data_function.arn}"
+                ],
                 "Effect": "Allow"
+            },
+            {
+                "Effect": "Allow",
+                "Action": [
+                    "sns:Publish"
+                ],
+                "Resource": [
+                    "${module.invalid_invoice_error_topic.topic_arn}",
+                    "${module.data_storage_failure_topic.topic_arn}"
+                ]
             }
         ]
     }
@@ -375,7 +390,6 @@ module "step_function" {
           "Validate Table Information": {
             "Type": "Task",
             "Resource": "${module.table_sanity_check_function.arn}",
-            "OutputPath": "$.Payload",
             "Parameters": {
               "FunctionName": "",
               "Payload.$": "$"
@@ -400,9 +414,9 @@ module "step_function" {
             "Type": "Choice",
             "Choices": [
               {
-                "Variable": "$.validationResult",
-                "BooleanEquals": false,
-                "Next": "Error : Invalid invoice"
+                "Next": "Error : Invalid invoice",
+                "Variable": "$.body.tables_count",
+                "NumericGreaterThan": 1
               }
             ],
             "Default": "Store data into Redshift"
@@ -422,7 +436,6 @@ module "step_function" {
           "Store data into Redshift": {
             "Type": "Task",
             "Resource": "${module.extract_table_data_function.arn}",
-            "OutputPath": "$.Payload",
             "Parameters": {
               "FunctionName": "",
               "Payload.$": "$"
@@ -447,9 +460,11 @@ module "step_function" {
             "Type": "Choice",
             "Choices": [
               {
-                "Variable": "$.storageResult",
-                "BooleanEquals": false,
-                "Next": "Error: Failure while storing data"
+                "Next": "Error: Failure while storing data",
+                "Not": {
+                  "Variable": "$.body.state",
+                  "StringEquals": "success"
+                }
               }
             ],
             "Default": "Success"
@@ -603,7 +618,7 @@ module "start_step_function_iam_role" {
                     "states:StartExecution"
                 ],
                 "Resource": "${module.step_function.arn}"
-            },
+            }
         ]
     }
     EOF
@@ -615,6 +630,7 @@ module "table_sanity_check_function" {
   role_arn      = module.lambda_function_iam_role.arn
   permissions   = []
   env_variables = {}
+  timeout = 60
   handler       = "table_sanity_check.lambda_handler"
   runtime       = "python3.12"
   s3_bucket     = module.table_sanity_check_function_code.bucket
@@ -627,6 +643,7 @@ module "extract_table_data_function" {
   function_name = "extract-table-data"
   role_arn      = module.lambda_function_iam_role.arn
   permissions   = []
+  timeout = 60
   env_variables = {}
   handler       = "extract_table_data.lambda_handler"
   runtime       = "python3.12"
@@ -640,10 +657,13 @@ module "start_step_function_lambda" {
   function_name = "start-step-function"
   role_arn      = module.start_step_function_iam_role.arn
   permissions   = []
-  env_variables = {}
-  handler       = "start_step_function.lambda_handler"
-  runtime       = "python3.12"
-  s3_bucket     = module.start_step_function_code.bucket
-  s3_key        = "start_step_function.zip"
-  depends_on    = [module.start_step_function_code]
+  timeout = 60
+  env_variables = {
+    STEP_FUNCTION_ARN = module.step_function.arn
+  }
+  handler    = "start_step_function.lambda_handler"
+  runtime    = "python3.12"
+  s3_bucket  = module.start_step_function_code.bucket
+  s3_key     = "start_step_function.zip"
+  depends_on = [module.start_step_function_code]
 }
