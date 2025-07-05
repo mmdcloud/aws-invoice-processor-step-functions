@@ -630,7 +630,7 @@ module "table_sanity_check_function" {
   role_arn      = module.lambda_function_iam_role.arn
   permissions   = []
   env_variables = {}
-  timeout = 60
+  timeout       = 60
   handler       = "table_sanity_check.lambda_handler"
   runtime       = "python3.12"
   s3_bucket     = module.table_sanity_check_function_code.bucket
@@ -643,7 +643,7 @@ module "extract_table_data_function" {
   function_name = "extract-table-data"
   role_arn      = module.lambda_function_iam_role.arn
   permissions   = []
-  timeout = 60
+  timeout       = 60
   env_variables = {}
   handler       = "extract_table_data.lambda_handler"
   runtime       = "python3.12"
@@ -657,7 +657,7 @@ module "start_step_function_lambda" {
   function_name = "start-step-function"
   role_arn      = module.start_step_function_iam_role.arn
   permissions   = []
-  timeout = 60
+  timeout       = 60
   env_variables = {
     STEP_FUNCTION_ARN = module.step_function.arn
   }
