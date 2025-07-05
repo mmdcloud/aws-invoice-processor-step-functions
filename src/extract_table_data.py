@@ -10,9 +10,10 @@ def lambda_handler(event, context):
     try:
         print(f"event: ${event}")
         # Get S3 bucket and file from the event (triggered by S3 upload)
-        s3_bucket = event['Records'][0]['s3']['bucket']['name']
-        s3_key = event['Records'][0]['s3']['object']['key']
-        
+        s3_bucket = event['Payload']['Records'][0]['s3']['bucket']['name']
+        s3_key = event['Payload']['Records'][0]['s3']['object']['key']
+        print(s3_bucket)
+        print(s3_key)
         # Verify object exists (added this check)
         s3.head_object(Bucket=s3_bucket, Key=s3_key)
         
