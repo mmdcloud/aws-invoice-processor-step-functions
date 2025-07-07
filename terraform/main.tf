@@ -1,3 +1,11 @@
+# locals {
+#   common_tags = {
+#     Project     = var.project_name
+#     Environment = var.environment
+#     ManagedBy   = "terraform"
+#   }
+# }
+
 resource "random_id" "id" {
   byte_length = 8
 }
@@ -12,7 +20,7 @@ module "invalid_invoice_error_topic" {
   subscriptions = [
     {
       protocol = "email"
-      endpoint = "madmaxcloudonline@gmail.com"
+      endpoint = var.notification_email
     }
   ]
 }
@@ -23,7 +31,7 @@ module "data_storage_failure_topic" {
   subscriptions = [
     {
       protocol = "email"
-      endpoint = "madmaxcloudonline@gmail.com"
+      endpoint = var.notification_email
     }
   ]
 }
@@ -178,11 +186,9 @@ module "mediaconvert_dynamodb" {
       type = "S"
     }
   ]
-  billing_mode          = "PROVISIONED"
+  billing_mode          = "PAY_PER_REQUEST"
   hash_key              = "RecordId"
   range_key             = "filename"
-  read_capacity         = 20
-  write_capacity        = 20
   ttl_attribute_name    = "TimeToExist"
   ttl_attribute_enabled = true
 }
@@ -382,108 +388,12 @@ module "step_function" {
   source     = "./modules/step-function"
   name       = "InvoiceProcessingWorkflow"
   role_arn   = module.step_function_iam_role.arn
-  definition = <<EOF
-      {
-        "Comment": "Invoice processing workflow",
-        "StartAt": "Validate Table Information",
-        "States": {
-          "Validate Table Information": {
-            "Type": "Task",
-            "Resource": "${module.table_sanity_check_function.arn}",
-            "Parameters": {
-              "FunctionName": "",
-              "Payload.$": "$"
-            },
-            "Retry": [
-              {
-                "ErrorEquals": [
-                  "Lambda.ServiceException",
-                  "Lambda.AWSLambdaException",
-                  "Lambda.SdkClientException",
-                  "Lambda.TooManyRequestsException"
-                ],
-                "IntervalSeconds": 1,
-                "MaxAttempts": 3,
-                "BackoffRate": 2,
-                "JitterStrategy": "FULL"
-              }
-            ],
-            "Next": "If validated"
-          },
-          "If validated": {
-            "Type": "Choice",
-            "Choices": [
-              {
-                "Next": "Error : Invalid invoice",
-                "Variable": "$.body.tables_count",
-                "NumericGreaterThan": 1
-              }
-            ],
-            "Default": "Store data into Redshift"
-          },
-          "Error : Invalid invoice": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::sns:publish",
-            "Parameters": {
-              "TopicArn": "${module.invalid_invoice_error_topic.topic_arn}",
-              "Message.$": "$"
-            },
-            "Next": "Fail"
-          },
-          "Fail": {
-            "Type": "Fail"
-          },
-          "Store data into Redshift": {
-            "Type": "Task",
-            "Resource": "${module.extract_table_data_function.arn}",
-            "Parameters": {
-              "FunctionName": "",
-              "Payload.$": "$"
-            },
-            "Retry": [
-              {
-                "ErrorEquals": [
-                  "Lambda.ServiceException",
-                  "Lambda.AWSLambdaException",
-                  "Lambda.SdkClientException",
-                  "Lambda.TooManyRequestsException"
-                ],
-                "IntervalSeconds": 1,
-                "MaxAttempts": 3,
-                "BackoffRate": 2,
-                "JitterStrategy": "FULL"
-              }
-            ],
-            "Next": "If data stored successfully"
-          },
-          "If data stored successfully": {
-            "Type": "Choice",
-            "Choices": [
-              {
-                "Next": "Error: Failure while storing data",
-                "Not": {
-                  "Variable": "$.body.state",
-                  "StringEquals": "success"
-                }
-              }
-            ],
-            "Default": "Success"
-          },
-          "Error: Failure while storing data": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::sns:publish",
-            "Parameters": {
-              "TopicArn": "${module.data_storage_failure_topic.topic_arn}",
-              "Message.$": "$"
-            },
-            "Next": "Fail"
-          },
-          "Success": {
-            "Type": "Succeed"
-          }
-        }
-      }
-    EOF
+  definition = templatefile("${path.module}/files/step-function-definition.json",{
+    table_sanity_check_function_arn = module.table_sanity_check_function.arn
+    extract_table_data_function_arn = module.extract_table_data_function.arn
+    invalid_invoice_error_topic_arn = module.invalid_invoice_error_topic.topic_arn
+    data_storage_failure_topic_arn  = module.data_storage_failure_topic.topic_arn
+  })
 }
 
 # -----------------------------------------------------------------------------------------
@@ -563,6 +473,16 @@ module "lambda_function_iam_role" {
                     "${module.invoices_bucket.arn}",
                     "${module.invoices_bucket.arn}/*"
                 ]
+            },
+            {
+                "Effect": "Allow",
+                "Action": [
+                    "dynamodb:PutItem",
+                    "dynamodb:GetItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:Query"
+                ],
+                "Resource": "${module.mediaconvert_dynamodb.arn}"
             }
         ]
     }

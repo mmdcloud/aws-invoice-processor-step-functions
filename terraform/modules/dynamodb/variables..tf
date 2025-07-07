@@ -1,7 +1,13 @@
 variable "name" {}
 variable "billing_mode" {}
-variable "read_capacity" {}
-variable "write_capacity" {}
+variable "read_capacity" {
+  type = number
+  default = null
+}
+variable "write_capacity" {
+  type = number
+  default = null
+}
 variable "hash_key" {}
 variable "range_key" {}
 variable "attributes" {
