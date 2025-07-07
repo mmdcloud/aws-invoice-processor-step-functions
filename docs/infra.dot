@@ -1,0 +1,55 @@
+digraph INFRA {
+  node [ color = "black", fillcolor = "#E6E6E6", height =1, style = "filled,bold,rounded", fontname = "Arial" ];
+  "invoices-bucket" [ label = "invoices-bucket
+(AWS::S3::Bucket)", shape =cylinder, fillcolor = "#FFF5CD" ];
+  "extract-table-data-source-code-bucket" [ label = "extract-table-data-source-code-bucket
+(AWS::S3::Bucket)", shape =cylinder, fillcolor = "#FFF5CD" ];
+  "table-sanity-check-source-code-bucket" [ label = "table-sanity-check-source-code-bucket
+(AWS::S3::Bucket)", shape =cylinder, fillcolor = "#FFF5CD" ];
+  "start-step-function-source-code-bucket" [ label = "start-step-function-source-code-bucket
+(AWS::S3::Bucket)", shape =cylinder, fillcolor = "#FFF5CD" ];
+  "invalid-invoice-error-topic" [ label = "invalid-invoice-error-topic
+(AWS::SNS::Topic)", shape =rectangle, fillcolor = "#CCE0AC" ];
+  "data-storage-failure-topic" [ label = "data-storage-failure-topic
+(AWS::SNS::Topic)", shape =rectangle, fillcolor = "#CCE0AC" ];
+  "vpc" [ label = "vpc
+(AWS::EC2::VPC)", shape =rectangle ];
+  "redshift-security-group" [ label = "redshift-security-group
+(AWS::EC2::SecurityGroup)", shape =rectangle ];
+  "public-subnets" [ label = "public-subnets
+(AWS::EC2::Subnet)", shape =rectangle ];
+  "private-subnets" [ label = "private-subnets
+(AWS::EC2::Subnet)", shape =rectangle ];
+  "public-route-table" [ label = "public-route-table
+(AWS::EC2::RouteTable)", shape =rectangle ];
+  "private-route-table" [ label = "private-route-table
+(AWS::EC2::RouteTable)", shape =rectangle ];
+  "invoice-records" [ label = "invoice-records
+(AWS::DynamoDB::Table)", shape =cylinder, fillcolor = "#FFCFB3" ];
+  "document-event-queue" [ label = "document-event-queue
+(AWS::SQS::Queue)", shape =rectangle, fillcolor = "#CCE0AC" ];
+  "step_function_iam_role" [ label = "step_function_iam_role
+(AWS::IAM::Role)", shape =rectangle ];
+  "start-step-function-lambda" [ label = "start-step-function-lambda
+(AWS::Lambda::Function)", shape =rectangle, fillcolor = "#B7E0FF" ];
+  "table-sanity-check-function" [ label = "table-sanity-check-function
+(AWS::Lambda::Function)", shape =rectangle, fillcolor = "#B7E0FF" ];
+  "extract-table-data-function" [ label = "extract-table-data-function
+(AWS::Lambda::Function)", shape =rectangle, fillcolor = "#B7E0FF" ];
+  "invoices-bucket" -> "document-event-queue";
+  "redshift-security-group" -> "vpc";
+  "public-subnets" -> "vpc";
+  "private-subnets" -> "vpc";
+  "public-route-table" -> "vpc";
+  "public-route-table" -> "public-subnets";
+  "private-route-table" -> "vpc";
+  "private-route-table" -> "private-subnets";
+  "step_function_iam_role" -> "table-sanity-check-function";
+  "step_function_iam_role" -> "extract-table-data-function";
+  "step_function_iam_role" -> "invalid-invoice-error-topic";
+  "step_function_iam_role" -> "data-storage-failure-topic";
+  "start-step-function-lambda" -> "document-event-queue";
+  "start-step-function-lambda" -> "start-step-function-source-code-bucket";
+  "table-sanity-check-function" -> "table-sanity-check-source-code-bucket";
+  "extract-table-data-function" -> "extract-table-data-source-code-bucket";
+}
