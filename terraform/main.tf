@@ -385,10 +385,10 @@ module "step_function_iam_role" {
 # -----------------------------------------------------------------------------------------
 
 module "step_function" {
-  source     = "./modules/step-function"
-  name       = "InvoiceProcessingWorkflow"
-  role_arn   = module.step_function_iam_role.arn
-  definition = templatefile("${path.module}/files/step-function-definition.json",{
+  source   = "./modules/step-function"
+  name     = "InvoiceProcessingWorkflow"
+  role_arn = module.step_function_iam_role.arn
+  definition = templatefile("${path.module}/files/step-function-definition.json", {
     table_sanity_check_function_arn = module.table_sanity_check_function.arn
     extract_table_data_function_arn = module.extract_table_data_function.arn
     invalid_invoice_error_topic_arn = module.invalid_invoice_error_topic.topic_arn
