@@ -173,7 +173,7 @@ module "private_rt" {
 # -----------------------------------------------------------------------------------------
 # DynamoDb Configuration
 # -----------------------------------------------------------------------------------------
-module "mediaconvert_dynamodb" {
+module "invoice_records_dynamodb" {
   source = "./modules/dynamodb"
   name   = "invoice-records"
   attributes = [
@@ -482,7 +482,7 @@ module "lambda_function_iam_role" {
                     "dynamodb:UpdateItem",
                     "dynamodb:Query"
                 ],
-                "Resource": "${module.mediaconvert_dynamodb.arn}"
+                "Resource": "${module.invoice_records_dynamodb.arn}"
             }
         ]
     }

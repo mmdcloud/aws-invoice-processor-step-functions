@@ -3,32 +3,27 @@ import boto3
 from botocore.exceptions import ClientError
 
 # Initialize Textract client
-textract = boto3.client('textract')
+textract = boto3.client('textract', region_name='us-east-1')
+s3 = boto3.client('s3', region_name='us-east-1')
 
 def lambda_handler(event, context):
     try:
-        # Prepare the document for Textract
-        if 'Payload' in event:
-            # Document is in S3
-            document = {
-                'S3Object': {
-                    'Bucket': event['Payload']['Records'][0]['s3']['bucket']['name'],
-                    'Name': event['Payload']['Records'][0]['s3']['object']['key']
-                }
-            }
-            # Use analyze_document for S3 documents
-            response = textract.analyze_document(
-                Document=document,
-                FeatureTypes=['TABLES']
-            )
-        else:
-            return {
-                'statusCode': 400,
-                'body': json.dumps({
-                    'error': 'Either S3 bucket/key or document_bytes must be provided'
-                })
-            }
+        # Get S3 bucket and file from the event (triggered by S3 upload)
+        s3_bucket = event['Payload']['Records'][0]['s3']['bucket']['name']
+        s3_key = event['Payload']['Records'][0]['s3']['object']['key']
+        # Verify object exists (added this check)
+        s3.head_object(Bucket=s3_bucket, Key=s3_key)
         
+        # Call Textract to detect tables
+        response = textract.analyze_document(
+            Document={
+                'S3Object': {
+                    'Bucket': s3_bucket,
+                    'Name': s3_key
+                }
+            },
+            FeatureTypes=["TABLES"]  # Only extract tables
+        )
         # Process the response to count tables and header fields
         tables_count = 0
         total_header_fields = 0
@@ -84,20 +79,7 @@ def lambda_handler(event, context):
         return {
             'statusCode': 200,
             'body': result
-        }
-        
-    except ClientError as e:
-        print(e)
-        error_code = e.response['Error']['Code']
-        error_message = e.response['Error']['Message']
-        return {
-            'statusCode': 500,
-            'body': json.dumps({
-                'error': f'AWS Error: {error_code} - {error_message}',
-                'processing_status': 'FAILED'
-            })
-        }
-    
+        }    
     except Exception as e:
         print(e)
         return {

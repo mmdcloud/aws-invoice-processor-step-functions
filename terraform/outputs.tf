@@ -11,5 +11,5 @@ output "step_function_arn" {
 
 output "dynamodb_table_name" {
   description = "Name of the DynamoDB table"
-  value       = module.mediaconvert_dynamodb.name
+  value       = module.invoice_records_dynamodb.name
 }
