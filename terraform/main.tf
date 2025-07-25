@@ -158,7 +158,7 @@ module "private_rt" {
 #       workgroup_name      = "invoice-processing-workgroup"
 #       base_capacity       = 128
 #       publicly_accessible = false
-#       subnet_ids          = module.private_subnets.subnets[*].id
+#       subnet_ids          = module.public_subnets.subnets[*].id
 #       security_group_ids  = [module.redshift_security_group.id]
 #       config_parameters = [
 #         {
@@ -395,28 +395,6 @@ module "step_function" {
     data_storage_failure_topic_arn  = module.data_storage_failure_topic.topic_arn
   })
 }
-
-# -----------------------------------------------------------------------------------------
-# Eventbridge Configuration
-# -----------------------------------------------------------------------------------------
-
-# S3 upload event rule to trigger a Step Function
-# module "s3_upload_event_rule" {
-#   source           = "./modules/eventbridge"
-#   rule_name        = "s3-upload-event-rule"
-#   rule_description = "Rule for S3 Upload Events"
-#   event_pattern = jsonencode({
-#     source = [
-#       "aws.s3"
-#     ]
-#     detail-type = [
-#       "PutObject",
-#       "CompleteMultipartUpload"
-#     ]
-#   })
-#   target_id  = "TriggerStepFunction"
-#   target_arn = module.step_function.arn
-# }
 
 # -----------------------------------------------------------------------------------------
 # Lambda Configuration
