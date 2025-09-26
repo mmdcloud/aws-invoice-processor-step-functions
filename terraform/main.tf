@@ -1,10 +1,3 @@
-# locals {
-#   common_tags = {
-#     Project     = var.project_name
-#     Environment = var.environment
-#     ManagedBy   = "terraform"
-#   }
-# }
 
 resource "random_id" "id" {
   byte_length = 8
@@ -143,32 +136,6 @@ module "private_rt" {
   routes  = []
   vpc_id  = module.vpc.vpc_id
 }
-
-# -----------------------------------------------------------------------------------------
-# Redshift Configuration
-# -----------------------------------------------------------------------------------------
-# module "redshift_serverless" {
-#   source              = "./modules/redshift"
-#   namespace_name      = "invoice-processing-namespace"
-#   admin_username      = "admin"
-#   admin_user_password = "AdminPassword123!"
-#   db_name             = "invoice_db"
-#   workgroups = [
-#     {
-#       workgroup_name      = "invoice-processing-workgroup"
-#       base_capacity       = 128
-#       publicly_accessible = false
-#       subnet_ids          = module.public_subnets.subnets[*].id
-#       security_group_ids  = [module.redshift_security_group.id]
-#       config_parameters = [
-#         {
-#           parameter_key   = "enable_user_activity_logging"
-#           parameter_value = "true"
-#         }
-#       ]
-#     }
-#   ]
-# }
 
 # -----------------------------------------------------------------------------------------
 # DynamoDb Configuration

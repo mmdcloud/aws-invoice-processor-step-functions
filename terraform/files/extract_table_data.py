@@ -1,6 +1,7 @@
 import json
 import boto3
 
+
 # Initialize clients
 textract = boto3.client('textract', region_name='us-east-1')
 s3 = boto3.client('s3', region_name='us-east-1')
