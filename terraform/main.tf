@@ -6,7 +6,6 @@ resource "random_id" "id" {
 # -----------------------------------------------------------------------------------------
 # SNS Configuration
 # -----------------------------------------------------------------------------------------
-
 module "invalid_invoice_error_topic" {
   source     = "./modules/sns"
   topic_name = "invalid-invoice-error-topic"
@@ -32,109 +31,49 @@ module "data_storage_failure_topic" {
 # -----------------------------------------------------------------------------------------
 # VPC Configuration
 # -----------------------------------------------------------------------------------------
-
 module "vpc" {
-  source                = "./modules/vpc/vpc"
-  vpc_name              = "vpc"
-  vpc_cidr_block        = "10.0.0.0/16"
-  enable_dns_hostnames  = true
-  enable_dns_support    = true
-  internet_gateway_name = "vpc_igw"
+  source                  = "./modules/vpc"
+  vpc_name                = "vpc"
+  vpc_cidr                = "10.0.0.0/16"
+  azs                     = var.azs
+  public_subnets          = var.public_subnets
+  private_subnets         = var.private_subnets
+  enable_dns_hostnames    = true
+  enable_dns_support      = true
+  create_igw              = true
+  map_public_ip_on_launch = true
+  enable_nat_gateway      = true
+  single_nat_gateway      = false
+  one_nat_gateway_per_az  = true
+  tags = {
+    Project     = "invoice-processor"
+  }
 }
 
 # Security Group
-module "redshift_security_group" {
-  source = "./modules/vpc/security_groups"
-  vpc_id = module.vpc.vpc_id
+resource "aws_security_group" "redshift_security_group" {
   name   = "redshift-security-group"
-  ingress = [
-    {
-      from_port       = 5439
-      to_port         = 5439
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = ["0.0.0.0/0"]
-      security_groups = []
-      description     = "any"
-    }
-  ]
-  egress = [
-    {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
-}
-
-# Public Subnets
-module "public_subnets" {
-  source = "./modules/vpc/subnets"
-  name   = "public-subnet"
-  subnets = [
-    {
-      subnet = "10.0.1.0/24"
-      az     = "us-east-1a"
-    },
-    {
-      subnet = "10.0.2.0/24"
-      az     = "us-east-1b"
-    },
-    {
-      subnet = "10.0.3.0/24"
-      az     = "us-east-1c"
-    }
-  ]
-  vpc_id                  = module.vpc.vpc_id
-  map_public_ip_on_launch = true
-}
-
-# Private Subnets
-module "private_subnets" {
-  source = "./modules/vpc/subnets"
-  name   = "private-subnet"
-  subnets = [
-    {
-      subnet = "10.0.6.0/24"
-      az     = "us-east-1d"
-    },
-    {
-      subnet = "10.0.5.0/24"
-      az     = "us-east-1e"
-    },
-    {
-      subnet = "10.0.4.0/24"
-      az     = "us-east-1f"
-    }
-  ]
-  vpc_id                  = module.vpc.vpc_id
-  map_public_ip_on_launch = false
-}
-
-# Public Route Table
-module "public_rt" {
-  source  = "./modules/vpc/route_tables"
-  name    = "public-route-table"
-  subnets = module.public_subnets.subnets[*]
-  routes = [
-    {
-      cidr_block         = "0.0.0.0/0"
-      gateway_id         = module.vpc.igw_id
-      nat_gateway_id     = ""
-      transit_gateway_id = ""
-    }
-  ]
   vpc_id = module.vpc.vpc_id
-}
 
-# Private Route Table
-module "private_rt" {
-  source  = "./modules/vpc/route_tables"
-  name    = "private-route-table"
-  subnets = module.private_subnets.subnets[*]
-  routes  = []
-  vpc_id  = module.vpc.vpc_id
+  ingress {
+    description = "Redshift traffic"
+    from_port   = 5439
+    to_port     = 5439
+    protocol    = "tcp"
+    self        = false
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "redshift-security-group"
+  }
 }
 
 # -----------------------------------------------------------------------------------------
