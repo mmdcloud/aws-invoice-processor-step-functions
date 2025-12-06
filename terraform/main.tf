@@ -46,7 +46,7 @@ module "vpc" {
   single_nat_gateway      = false
   one_nat_gateway_per_az  = true
   tags = {
-    Project     = "invoice-processor"
+    Project = "invoice-processor"
   }
 }
 
@@ -102,7 +102,6 @@ module "invoice_records_dynamodb" {
 # -----------------------------------------------------------------------------------------
 # S3 Configuration
 # -----------------------------------------------------------------------------------------
-
 module "invoices_bucket" {
   source             = "./modules/s3"
   bucket_name        = "invoices-${random_id.id.hex}"
