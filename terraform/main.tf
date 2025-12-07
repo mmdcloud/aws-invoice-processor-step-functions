@@ -288,7 +288,6 @@ module "step_function_iam_role" {
 # -----------------------------------------------------------------------------------------
 # Step Function Configuration
 # -----------------------------------------------------------------------------------------
-
 module "step_function" {
   source   = "./modules/step-function"
   name     = "InvoiceProcessingWorkflow"
