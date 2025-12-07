@@ -50,32 +50,6 @@ module "vpc" {
   }
 }
 
-# Security Group
-resource "aws_security_group" "redshift_security_group" {
-  name   = "redshift-security-group"
-  vpc_id = module.vpc.vpc_id
-
-  ingress {
-    description = "Redshift traffic"
-    from_port   = 5439
-    to_port     = 5439
-    protocol    = "tcp"
-    self        = false
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "redshift-security-group"
-  }
-}
-
 # -----------------------------------------------------------------------------------------
 # DynamoDb Configuration
 # -----------------------------------------------------------------------------------------
@@ -197,7 +171,6 @@ module "start_step_function_code" {
 # -----------------------------------------------------------------------------------------
 # SQS Config
 # -----------------------------------------------------------------------------------------
-
 resource "aws_lambda_event_source_mapping" "document_event_queue_trigger" {
   event_source_arn                   = module.document_event_queue.arn
   function_name                      = module.start_step_function_lambda.arn
@@ -303,14 +276,12 @@ module "step_function" {
 # -----------------------------------------------------------------------------------------
 # Lambda Configuration
 # -----------------------------------------------------------------------------------------
-
-# Lambda IAM  Role
 module "lambda_function_iam_role" {
   source             = "./modules/iam"
-  role_name          = "lambda_function_iam_role"
-  role_description   = "lambda_function_iam_role"
-  policy_name        = "lambda_function_iam_policy"
-  policy_description = "lambda_function_iam_policy"
+  role_name          = "lambda-function-iam-role"
+  role_description   = "lambda-function-iam-role"
+  policy_name        = "lambda-function-iam-policy"
+  policy_description = "lambda-function-iam-policy"
   assume_role_policy = <<EOF
     {
         "Version": "2012-10-17",
@@ -373,10 +344,10 @@ module "lambda_function_iam_role" {
 
 module "start_step_function_iam_role" {
   source             = "./modules/iam"
-  role_name          = "start_step_function_iam_role"
-  role_description   = "start_step_function_iam_role"
-  policy_name        = "start_step_function_iam_policy"
-  policy_description = "start_step_function_iam_policy"
+  role_name          = "start-step-function-iam-role"
+  role_description   = "start-step-function-iam-role"
+  policy_name        = "start-step-function-iam-policy"
+  policy_description = "start-step-function-iam-policy"
   assume_role_policy = <<EOF
     {
         "Version": "2012-10-17",
