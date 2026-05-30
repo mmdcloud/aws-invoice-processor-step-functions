@@ -1,4 +1,4 @@
-# Automated Invoice Processing Pipeline with AWS Services
+# 🚀 Automated Invoice Processing Pipeline with AWS Services
 
 This project implements a serverless invoice processing pipeline that extracts and validates table data from PDF invoices using AWS services. It automatically processes uploaded invoices, performs data validation, and handles errors through a robust notification system.
 
