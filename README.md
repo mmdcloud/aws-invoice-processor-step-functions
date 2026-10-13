@@ -18,7 +18,6 @@ The solution leverages AWS Step Functions to orchestrate the processing workflow
     │   ├── eventbridge/              # EventBridge rules configuration
     │   ├── iam/                      # IAM roles and policies
     │   ├── lambda/                   # Lambda function infrastructure
-    │   ├── redshift/                 # Redshift cluster configuration
     │   ├── s3/                       # S3 buckets for storage
     │   ├── sns/                      # SNS topics for notifications
     │   ├── sqs/                      # SQS queues for event handling
@@ -136,7 +135,6 @@ Component interactions:
 4. AWS Textract processes PDF documents
 5. DynamoDB stores processed invoice data
 6. SNS handles error notifications
-7. VPC components secure Redshift access
 
 ## Infrastructure
 
@@ -162,5 +160,4 @@ Component interactions:
 ### Networking
 - VPC with CIDR `10.0.0.0/16`
 - Public and private subnets across availability zones
-- Security groups for Redshift access
 - Route tables for subnet traffic management

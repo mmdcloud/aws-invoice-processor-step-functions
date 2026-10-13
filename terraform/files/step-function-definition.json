@@ -1,100 +1,104 @@
 {
-    "Comment": "Invoice processing workflow",
-    "StartAt": "Validate Table Information",
-    "States": {
-      "Validate Table Information": {
-        "Type": "Task",
-        "Resource": "${table_sanity_check_function_arn}",
-        "Parameters": {
-          "FunctionName": "",
-          "Payload.$": "$"
-        },
-        "Retry": [
-          {
-            "ErrorEquals": [
-              "Lambda.ServiceException",
-              "Lambda.AWSLambdaException",
-              "Lambda.SdkClientException",
-              "Lambda.TooManyRequestsException"
-            ],
-            "IntervalSeconds": 1,
-            "MaxAttempts": 3,
-            "BackoffRate": 2,
-            "JitterStrategy": "FULL"
-          }
-        ],
-        "Next": "If validated"
-      },
-      "If validated": {
-        "Type": "Choice",
-        "Choices": [
-          {
-            "Next": "Error : Invalid invoice",
-            "Variable": "$.body.tables_count",
-            "NumericGreaterThan": 1
-          }
-        ],
-        "Default": "Store data into Redshift"
-      },
-      "Error : Invalid invoice": {
-        "Type": "Task",
-        "Resource": "arn:aws:states:::sns:publish",
-        "Parameters": {
-          "TopicArn": "${invalid_invoice_error_topic_arn}",
-          "Message.$": "$"
-        },
-        "Next": "Fail"
-      },
-      "Fail": {
-        "Type": "Fail"
-      },
-      "Store data into Redshift": {
-        "Type": "Task",
-        "Resource": "${extract_table_data_function_arn}",
-        "Parameters": {
-          "FunctionName": "",
-          "Payload.$": "$"
-        },
-        "Retry": [
-          {
-            "ErrorEquals": [
-              "Lambda.ServiceException",
-              "Lambda.AWSLambdaException",
-              "Lambda.SdkClientException",
-              "Lambda.TooManyRequestsException"
-            ],
-            "IntervalSeconds": 1,
-            "MaxAttempts": 3,
-            "BackoffRate": 2,
-            "JitterStrategy": "FULL"
-          }
-        ],
-        "Next": "If data stored successfully"
-      },
-      "If data stored successfully": {
-        "Type": "Choice",
-        "Choices": [
-          {
-            "Next": "Error: Failure while storing data",
-            "Not": {
-              "Variable": "$.body.state",
-              "StringEquals": "success"
+  "Comment": "Invoice processing workflow",
+  "StartAt": "Validate Table Information",
+  "States": {
+    "Validate Table Information": {
+      "Type": "Task",
+      "Resource": "${table_sanity_check_function_arn}",
+      "ResultPath": "$.validation_result",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Next": "If validated"
+    },
+    "If validated": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.validation_result.statusCode",
+              "NumericEquals": 200
+            },
+            {
+              "Variable": "$.validation_result.body.tables_count",
+              "NumericGreaterThanEquals": 1
+            },
+            {
+              "Variable": "$.validation_result.body.tables_count",
+              "NumericLessThanEquals": 1
             }
-          }
-        ],
-        "Default": "Success"
+          ],
+          "Next": "Extract and Store Table Data"
+        }
+      ],
+      "Default": "Error : Invalid invoice"
+    },
+    "Error : Invalid invoice": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${invalid_invoice_error_topic_arn}",
+        "Message.$": "$"
       },
-      "Error: Failure while storing data": {
-        "Type": "Task",
-        "Resource": "arn:aws:states:::sns:publish",
-        "Parameters": {
-          "TopicArn": "${data_storage_failure_topic_arn}",
-          "Message.$": "$"
-        },
-        "Next": "Fail"
+      "Next": "Fail"
+    },
+    "Fail": {
+      "Type": "Fail"
+    },
+    "Extract and Store Table Data": {
+      "Type": "Task",
+      "Resource": "${extract_table_data_function_arn}",
+      "ResultPath": "$.extraction_result",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Next": "If data stored successfully"
+    },
+    "If data stored successfully": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.extraction_result.statusCode",
+          "NumericEquals": 200,
+          "Next": "Success"
+        }
+      ],
+      "Default": "Error: Failure while storing data"
+    },
+    "Error: Failure while storing data": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${data_storage_failure_topic_arn}",
+        "Message.$": "$"
       },
-      "Success": {
-        "Type": "Succeed"
-      }
+      "Next": "Fail"
+    },
+    "Success": {
+      "Type": "Succeed"
     }
   }
+}

@@ -7,8 +7,11 @@ resource "aws_lambda_function" "function" {
   timeout = var.timeout
   s3_bucket     = var.s3_bucket
   s3_key        = var.s3_key
-  environment {
-    variables = var.env_variables
+  dynamic "environment" {
+    for_each = length(var.env_variables) > 0 ? [1] : []
+    content {
+      variables = var.env_variables
+    }
   }
 }
 

@@ -5,3 +5,11 @@ output "arn" {
 output "name" {
   value = aws_sqs_queue.queue.name
 }
+
+output "url" {
+  value = aws_sqs_queue.queue.url
+}
+
+output "id" {
+  value = aws_sqs_queue.queue.id
+}

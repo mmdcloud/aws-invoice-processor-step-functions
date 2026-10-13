@@ -1,20 +1,33 @@
 terraform {
+  required_version = ">= 1.6.0"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.0"
+      version = "~> 5.0"
     }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
   }
+  # Uncomment and configure this block if you want to store state remotely in S3:
+  # backend "s3" {
+  #   bucket         = "your-tfstate-bucket"
+  #   key            = "invoice-processor/terraform.tfstate"
+  #   region         = "us-east-1"
+  #   encrypt        = true
+  #   dynamodb_table = "terraform-state-lock"
+  # }
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region = var.region
+  default_tags {
+    tags = {
+      Project   = "invoice-processor"
+      ManagedBy = "terraform"
+    }
+  }
 }
 
-provider "random" {
-
-}
+provider "random" {}

@@ -100,6 +100,7 @@ module "invoices_bucket" {
     ]
     lambda_function = []
   }
+  depends_on = [aws_sqs_queue_policy.document_event_queue_policy]
 }
 
 module "extract_table_data_function_code" {
@@ -191,6 +192,11 @@ module "document_event_queue" {
   message_retention_seconds     = 345600
   visibility_timeout_seconds    = 180
   receive_wait_time_seconds     = 20
+  policy                        = ""
+}
+
+resource "aws_sqs_queue_policy" "document_event_queue_policy" {
+  queue_url = module.document_event_queue.url
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -198,10 +204,10 @@ module "document_event_queue" {
         Effect    = "Allow"
         Principal = { Service = "s3.amazonaws.com" }
         Action    = "sqs:SendMessage"
-        Resource  = "arn:aws:sqs:${var.region}:*:document-event-queue"
+        Resource  = module.document_event_queue.arn
         Condition = {
           ArnEquals = {
-            "aws:SourceArn" = module.invoices_bucket.arn
+            "aws:SourceArn" = "arn:aws:s3:::invoices-${random_id.id.hex}"
           }
         }
       }
@@ -417,12 +423,14 @@ module "extract_table_data_function" {
   role_arn      = module.lambda_function_iam_role.arn
   permissions   = []
   timeout       = 60
-  env_variables = {}
-  handler       = "extract_table_data.lambda_handler"
-  runtime       = "python3.12"
-  s3_bucket     = module.extract_table_data_function_code.bucket
-  s3_key        = "extract_table_data.zip"
-  depends_on    = [module.extract_table_data_function_code]
+  env_variables = {
+    DYNAMODB_TABLE = module.invoice_records_dynamodb.name
+  }
+  handler    = "extract_table_data.lambda_handler"
+  runtime    = "python3.12"
+  s3_bucket  = module.extract_table_data_function_code.bucket
+  s3_key     = "extract_table_data.zip"
+  depends_on = [module.extract_table_data_function_code]
 }
 
 module "start_step_function_lambda" {

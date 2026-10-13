@@ -1,29 +1,44 @@
 import json
-import boto3
 import os
+import boto3
 
-stepfunctions = boto3.client('stepfunctions')
+region = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
+stepfunctions = boto3.client("stepfunctions", region_name=region)
 step_function_arn = os.getenv("STEP_FUNCTION_ARN")
 
+
 def lambda_handler(event, context):
-    execution_arns = []    
-    for record in event.get('Records', []):
+    execution_arns = []
+    for record in event.get("Records", []):
         try:
-            # Get message body (assuming it's JSON-formatted)
-            message_body = record['body']
-            print(f"SQS Event Body : {message_body}")
+            message_body = record["body"]
+            print(f"SQS Event Body: {message_body}")
+
+            # Parse message to validate and filter
+            body_json = json.loads(message_body) if isinstance(message_body, str) else message_body
+
+            # Skip S3 test notifications
+            if body_json.get("Event") == "s3:TestEvent":
+                print("Skipping s3:TestEvent notification.")
+                continue
+
+            if not body_json.get("Records"):
+                print(f"No S3 Records found in message: {message_body}")
+                continue
+
             # Start Step Function execution
+            payload_input = message_body if isinstance(message_body, str) else json.dumps(message_body)
             response = stepfunctions.start_execution(
                 stateMachineArn=step_function_arn,
-                input=message_body
-            )            
-            execution_arns.append(response['executionArn'])
-            print(f"Started execution: {response['executionArn']}")
-            
+                input=payload_input,
+            )
+            execution_arns.append(response["executionArn"])
+            print(f"Started Step Function execution: {response['executionArn']}")
+
         except Exception as e:
-            print(f"Error processing message {record.get('messageId', 'unknown')}: {str(e)}")
-    
+            print(f"Error processing record {record.get('messageId', 'unknown')}: {str(e)}")
+
     return {
-        'statusCode': 200,
-        'executionArns': execution_arns
+        "statusCode": 200,
+        "executionArns": execution_arns,
     }
