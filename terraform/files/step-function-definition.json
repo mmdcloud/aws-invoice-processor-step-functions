@@ -50,7 +50,7 @@
       "Resource": "arn:aws:states:::sns:publish",
       "Parameters": {
         "TopicArn": "${invalid_invoice_error_topic_arn}",
-        "Message.$": "$"
+        "Message.$": "States.JsonToString($)"
       },
       "Next": "Fail"
     },
@@ -93,7 +93,7 @@
       "Resource": "arn:aws:states:::sns:publish",
       "Parameters": {
         "TopicArn": "${data_storage_failure_topic_arn}",
-        "Message.$": "$"
+        "Message.$": "States.JsonToString($)"
       },
       "Next": "Fail"
     },

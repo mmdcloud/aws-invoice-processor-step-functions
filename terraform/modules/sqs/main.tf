@@ -5,8 +5,7 @@ resource "aws_sqs_queue" "queue" {
   max_message_size           = var.max_message_size
   message_retention_seconds  = var.message_retention_seconds
   visibility_timeout_seconds = var.visibility_timeout_seconds
-  receive_wait_time_seconds  = var.receive_wait_time_seconds
-  policy = var.policy
+  policy                     = var.policy != "" && var.policy != null ? var.policy : null
   # Optional: Add a DLQ for failed messages
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.dlq.arn

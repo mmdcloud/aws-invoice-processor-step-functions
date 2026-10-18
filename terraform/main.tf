@@ -192,7 +192,6 @@ module "document_event_queue" {
   message_retention_seconds     = 345600
   visibility_timeout_seconds    = 180
   receive_wait_time_seconds     = 20
-  policy                        = ""
 }
 
 resource "aws_sqs_queue_policy" "document_event_queue_policy" {
