@@ -2,7 +2,7 @@ import json
 import os
 import boto3
 
-region = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
+region = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "ap-southeast-2"))
 stepfunctions = boto3.client("stepfunctions", region_name=region)
 step_function_arn = os.getenv("STEP_FUNCTION_ARN")
 

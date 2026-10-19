@@ -181,17 +181,28 @@ resource "aws_lambda_event_source_mapping" "document_event_queue_trigger" {
 }
 
 # SQS Queue for buffering S3 events
+module "document_event_dlq" {
+  source                     = "./modules/sqs"
+  queue_name                 = "document-event-dlq"
+  delay_seconds              = 0
+  max_message_size           = 262144
+  message_retention_seconds  = 345600
+  visibility_timeout_seconds = 180
+  receive_wait_time_seconds  = 20
+}
+
 module "document_event_queue" {
-  source                        = "./modules/sqs"
-  queue_name                    = "document-event-queue"
-  delay_seconds                 = 0
-  maxReceiveCount               = 3
-  dlq_message_retention_seconds = 86400
-  dlq_name                      = "document-event-dlq"
-  max_message_size              = 262144
-  message_retention_seconds     = 345600
-  visibility_timeout_seconds    = 180
-  receive_wait_time_seconds     = 20
+  source                     = "./modules/sqs"
+  queue_name                 = "document-event-queue"
+  delay_seconds              = 0
+  max_message_size           = 262144
+  message_retention_seconds  = 345600
+  visibility_timeout_seconds = 180
+  receive_wait_time_seconds  = 20
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = module.document_event_dlq.arn
+    maxReceiveCount     = 3
+  })
 }
 
 resource "aws_sqs_queue_policy" "document_event_queue_policy" {

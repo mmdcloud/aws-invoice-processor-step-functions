@@ -3,7 +3,7 @@ import os
 import urllib.parse
 import boto3
 
-region = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
+region = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "ap-southeast-2"))
 textract = boto3.client("textract", region_name=region)
 s3 = boto3.client("s3", region_name=region)
 
