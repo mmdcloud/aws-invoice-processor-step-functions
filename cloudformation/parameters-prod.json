@@ -1,0 +1,51 @@
+[
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "prod"
+  },
+  {
+    "ParameterKey": "NotificationEmail",
+    "ParameterValue": "alerts@example.com"
+  },
+  {
+    "ParameterKey": "LambdaCodeBucket",
+    "ParameterValue": "my-lambda-artifacts-bucket-prod"
+  },
+  {
+    "ParameterKey": "StartStepFunctionCodeKey",
+    "ParameterValue": "start_step_function.zip"
+  },
+  {
+    "ParameterKey": "TableSanityCheckCodeKey",
+    "ParameterValue": "table_sanity_check.zip"
+  },
+  {
+    "ParameterKey": "ExtractTableDataCodeKey",
+    "ParameterValue": "extract_table_data.zip"
+  },
+  {
+    "ParameterKey": "DynamoDBBillingMode",
+    "ParameterValue": "PAY_PER_REQUEST"
+  },
+  {
+    "ParameterKey": "DynamoDBPointInTimeRecovery",
+    "ParameterValue": "true"
+  },
+  {
+    "ParameterKey": "LogRetentionInDays",
+    "ParameterValue": "30"
+  },
+  {
+    "ParameterKey": "SQSVisibilityTimeout",
+    "ParameterValue": "180"
+  },
+  {
+    "ParameterKey": "SQSMessageRetentionPeriod",
+    "ParameterValue": "345600"
+  },
+  {
+    "ParameterKey": "EnableVPC",
+    "ParameterValue": "false"
+  }
+]
+

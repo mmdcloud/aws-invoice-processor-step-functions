@@ -178,6 +178,7 @@ resource "aws_lambda_event_source_mapping" "document_event_queue_trigger" {
   enabled                            = true
   batch_size                         = 10
   maximum_batching_window_in_seconds = 60
+  function_response_types            = ["ReportBatchItemFailures"]
 }
 
 # SQS Queue for buffering S3 events
@@ -186,7 +187,7 @@ module "document_event_dlq" {
   queue_name                 = "document-event-dlq"
   delay_seconds              = 0
   max_message_size           = 262144
-  message_retention_seconds  = 345600
+  message_retention_seconds  = 1209600
   visibility_timeout_seconds = 180
   receive_wait_time_seconds  = 20
 }

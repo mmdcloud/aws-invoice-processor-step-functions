@@ -1,0 +1,1065 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Production-Grade Automated Invoice Processing Pipeline using AWS Step Functions,
+  AWS Textract, AWS Lambda, Amazon S3, Amazon SQS, Amazon SNS, and Amazon DynamoDB.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Environment & Notification Settings"
+        Parameters:
+          - Environment
+          - NotificationEmail
+      - Label:
+          default: "Storage & Database Configuration"
+        Parameters:
+          - InvoicesBucketName
+          - DynamoDBBillingMode
+          - DynamoDBPointInTimeRecovery
+          - LogRetentionInDays
+      - Label:
+          default: "Messaging & Queue Configuration"
+        Parameters:
+          - SQSVisibilityTimeout
+          - SQSMessageRetentionPeriod
+      - Label:
+          default: "Lambda Code Artifacts"
+        Parameters:
+          - LambdaCodeBucket
+          - StartStepFunctionCodeKey
+          - TableSanityCheckCodeKey
+          - ExtractTableDataCodeKey
+      - Label:
+          default: "Optional VPC Configuration"
+        Parameters:
+          - EnableVPC
+          - VpcCidr
+          - AvailabilityZones
+          - PublicSubnet1Cidr
+          - PublicSubnet2Cidr
+          - PrivateSubnet1Cidr
+          - PrivateSubnet2Cidr
+
+    ParameterLabels:
+      Environment:
+        default: "Deployment Environment"
+      NotificationEmail:
+        default: "Notification Email Address"
+      InvoicesBucketName:
+        default: "Invoices S3 Bucket Name (Optional)"
+      DynamoDBBillingMode:
+        default: "DynamoDB Billing Mode"
+      DynamoDBPointInTimeRecovery:
+        default: "Enable DynamoDB Point-in-Time Recovery"
+      LogRetentionInDays:
+        default: "CloudWatch Log Retention (Days)"
+      SQSVisibilityTimeout:
+        default: "SQS Visibility Timeout (Seconds)"
+      SQSMessageRetentionPeriod:
+        default: "SQS Message Retention Period (Seconds)"
+      LambdaCodeBucket:
+        default: "Lambda Code S3 Bucket"
+      StartStepFunctionCodeKey:
+        default: "Start Step Function S3 Key"
+      TableSanityCheckCodeKey:
+        default: "Table Sanity Check S3 Key"
+      ExtractTableDataCodeKey:
+        default: "Extract Table Data S3 Key"
+      EnableVPC:
+        default: "Deploy VPC Networking"
+      VpcCidr:
+        default: "VPC CIDR Block"
+      AvailabilityZones:
+        default: "Availability Zones"
+      PublicSubnet1Cidr:
+        default: "Public Subnet 1 CIDR"
+      PublicSubnet2Cidr:
+        default: "Public Subnet 2 CIDR"
+      PrivateSubnet1Cidr:
+        default: "Private Subnet 1 CIDR"
+      PrivateSubnet2Cidr:
+        default: "Private Subnet 2 CIDR"
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: "Deployment environment stage (dev, staging, prod)."
+
+  NotificationEmail:
+    Type: String
+    Description: "Email address to receive alerts for invalid invoices and data storage errors."
+    AllowedPattern: "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
+    ConstraintDescription: "Must be a valid email address."
+
+  InvoicesBucketName:
+    Type: String
+    Default: ""
+    Description: "(Optional) Custom globally unique name for the invoices S3 bucket. If left blank, a unique name will be generated automatically."
+    AllowedPattern: "^([a-z0-9.-]{3,63})?$"
+    ConstraintDescription: "Bucket name must be between 3 and 63 characters and contain only lowercase letters, numbers, and hyphens."
+
+  DynamoDBBillingMode:
+    Type: String
+    Default: PAY_PER_REQUEST
+    AllowedValues:
+      - PAY_PER_REQUEST
+      - PROVISIONED
+    Description: "Billing mode for DynamoDB table."
+
+  DynamoDBPointInTimeRecovery:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: "Enable continuous Point-in-Time Recovery (PITR) backups for DynamoDB."
+
+  LogRetentionInDays:
+    Type: Number
+    Default: 30
+    AllowedValues:
+      - 7
+      - 14
+      - 30
+      - 60
+      - 90
+      - 180
+      - 365
+    Description: "Retention period in days for Lambda and Step Function CloudWatch Logs."
+
+  SQSVisibilityTimeout:
+    Type: Number
+    Default: 180
+    MinValue: 30
+    MaxValue: 43200
+    Description: "Visibility timeout in seconds for document event queue (should be >= 3x Lambda timeout)."
+
+  SQSMessageRetentionPeriod:
+    Type: Number
+    Default: 345600
+    MinValue: 60
+    MaxValue: 1209600
+    Description: "Message retention period in seconds for SQS queue (default: 4 days)."
+
+  LambdaCodeBucket:
+    Type: String
+    Description: "S3 bucket where Lambda deployment packages (.zip files) are stored."
+
+  StartStepFunctionCodeKey:
+    Type: String
+    Default: start_step_function.zip
+    Description: "S3 key for the start_step_function Lambda zip file."
+
+  TableSanityCheckCodeKey:
+    Type: String
+    Default: table_sanity_check.zip
+    Description: "S3 key for the table_sanity_check Lambda zip file."
+
+  ExtractTableDataCodeKey:
+    Type: String
+    Default: extract_table_data.zip
+    Description: "S3 key for the extract_table_data Lambda zip file."
+
+  EnableVPC:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: "Set to true to provision a supporting VPC with public and private subnets."
+
+  VpcCidr:
+    Type: String
+    Default: "10.0.0.0/16"
+    AllowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$"
+    Description: "CIDR block for the optional VPC."
+
+  AvailabilityZones:
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+    Description: "List of at least two Availability Zones to use for the subnets if VPC is enabled."
+
+  PublicSubnet1Cidr:
+    Type: String
+    Default: "10.0.1.0/24"
+    Description: "CIDR block for Public Subnet 1."
+
+  PublicSubnet2Cidr:
+    Type: String
+    Default: "10.0.2.0/24"
+    Description: "CIDR block for Public Subnet 2."
+
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: "10.0.4.0/24"
+    Description: "CIDR block for Private Subnet 1."
+
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: "10.0.5.0/24"
+    Description: "CIDR block for Private Subnet 2."
+
+Conditions:
+  HasCustomBucketName: !Not [!Equals [!Ref InvoicesBucketName, ""]]
+  EnablePITR: !Equals [!Ref DynamoDBPointInTimeRecovery, "true"]
+  CreateVpcCondition: !Equals [!Ref EnableVPC, "true"]
+
+Resources:
+  # -----------------------------------------------------------------------------------------
+  # 1. Messaging: SNS Error Notification Topics & Subscriptions
+  # -----------------------------------------------------------------------------------------
+  InvalidInvoiceErrorTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-invalid-invoice-error-topic"
+      DisplayName: "Invoice Processing Pipeline - Invalid Invoice Notification"
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  InvalidInvoiceErrorSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref InvalidInvoiceErrorTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  DataStorageFailureTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-data-storage-failure-topic"
+      DisplayName: "Invoice Processing Pipeline - Storage Failure Notification"
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  DataStorageFailureSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref DataStorageFailureTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref InvalidInvoiceErrorTopic
+        - !Ref DataStorageFailureTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowAccountOwner
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - SNS:Publish
+              - SNS:GetTopicAttributes
+              - SNS:SetTopicAttributes
+              - SNS:AddPermission
+              - SNS:RemovePermission
+              - SNS:DeleteTopic
+              - SNS:Subscribe
+              - SNS:ListSubscriptionsByTopic
+            Resource:
+              - !Ref InvalidInvoiceErrorTopic
+              - !Ref DataStorageFailureTopic
+            Condition:
+              StringEquals:
+                AWS:SourceOwner: !Ref "AWS::AccountId"
+          - Sid: AllowStepFunctionsToPublish
+            Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: SNS:Publish
+            Resource:
+              - !Ref InvalidInvoiceErrorTopic
+              - !Ref DataStorageFailureTopic
+
+  # -----------------------------------------------------------------------------------------
+  # 2. Database: DynamoDB Table for Invoice Records
+  # -----------------------------------------------------------------------------------------
+  InvoiceRecordsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-invoice-records"
+      BillingMode: !Ref DynamoDBBillingMode
+      AttributeDefinitions:
+        - AttributeName: RecordId
+          AttributeType: S
+        - AttributeName: filename
+          AttributeType: S
+      KeySchema:
+        - AttributeName: RecordId
+          KeyType: HASH
+        - AttributeName: filename
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: TimeToExist
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [EnablePITR, true, false]
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  # -----------------------------------------------------------------------------------------
+  # 3. Messaging: SQS Document Event Queue & Dead Letter Queue (DLQ)
+  # -----------------------------------------------------------------------------------------
+  DocumentEventDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-document-event-dlq"
+      MessageRetentionPeriod: 1209600 # 14 days
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  DocumentEventQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-document-event-queue"
+      DelaySeconds: 0
+      MaximumMessageSize: 262144
+      MessageRetentionPeriod: !Ref SQSMessageRetentionPeriod
+      VisibilityTimeout: !Ref SQSVisibilityTimeout
+      ReceiveMessageWaitTimeSeconds: 20
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DocumentEventDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  DocumentEventQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref DocumentEventQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowS3EventsToSendMessages
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt DocumentEventQueue.Arn
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref "AWS::AccountId"
+
+  # -----------------------------------------------------------------------------------------
+  # 4. Storage: S3 Invoices Upload Bucket
+  # -----------------------------------------------------------------------------------------
+  InvoicesBucket:
+    Type: AWS::S3::Bucket
+    DependsOn:
+      - DocumentEventQueuePolicy
+    Properties:
+      BucketName: !If
+        - HasCustomBucketName
+        - !Ref InvoicesBucketName
+        - !Sub "${AWS::StackName}-invoices-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - PUT
+              - GET
+            AllowedOrigins:
+              - "*"
+            MaxAge: 3000
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: "s3:ObjectCreated:*"
+            QueueArn: !GetAtt DocumentEventQueue.Arn
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  # -----------------------------------------------------------------------------------------
+  # 5. Observability: CloudWatch Log Groups
+  # -----------------------------------------------------------------------------------------
+  StartStepFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-start-step-function"
+      RetentionInDays: !Ref LogRetentionInDays
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  TableSanityCheckLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-table-sanity-check"
+      RetentionInDays: !Ref LogRetentionInDays
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  ExtractTableDataLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-extract-table-data"
+      RetentionInDays: !Ref LogRetentionInDays
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  StepFunctionsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/states/${AWS::StackName}-workflow"
+      RetentionInDays: !Ref LogRetentionInDays
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  # -----------------------------------------------------------------------------------------
+  # 6. Security: IAM Execution Roles & Least-Privilege Policies
+  # -----------------------------------------------------------------------------------------
+  StartStepFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-start-step-function-role"
+      Description: "IAM role for start_step_function Lambda triggered by SQS"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchLogsDelivery
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${StartStepFunctionLogGroup.Arn}:*"
+        - PolicyName: SqsMessageConsumer
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt DocumentEventQueue.Arn
+        - PolicyName: StepFunctionExecutionStarter
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${AWS::StackName}-InvoiceProcessingWorkflow"
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  LambdaProcessorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-lambda-processor-role"
+      Description: "IAM execution role for table_sanity_check and extract_table_data Lambda functions"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchLogsDelivery
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "${TableSanityCheckLogGroup.Arn}:*"
+                  - !Sub "${ExtractTableDataLogGroup.Arn}:*"
+        - PolicyName: TextractAnalyzeDocumentAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - textract:AnalyzeDocument
+                Resource: "*"
+        - PolicyName: InvoicesS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:HeadObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt InvoicesBucket.Arn
+                  - !Sub "${InvoicesBucket.Arn}/*"
+        - PolicyName: DynamoDBInvoiceRecordsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource: !GetAtt InvoiceRecordsTable.Arn
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-step-functions-role"
+      Description: "IAM execution role for InvoiceProcessingWorkflow Step Function"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdaProcessors
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt TableSanityCheckLambda.Arn
+                  - !GetAtt ExtractTableDataLambda.Arn
+                  - !Sub "${TableSanityCheckLambda.Arn}:*"
+                  - !Sub "${ExtractTableDataLambda.Arn}:*"
+        - PolicyName: PublishErrorNotifications
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref InvalidInvoiceErrorTopic
+                  - !Ref DataStorageFailureTopic
+        - PolicyName: CloudWatchLoggingDelivery
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  # -----------------------------------------------------------------------------------------
+  # 7. Compute: AWS Lambda Functions
+  # -----------------------------------------------------------------------------------------
+  StartStepFunctionLambda:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - StartStepFunctionLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-start-step-function"
+      Description: "Consumes SQS S3 notifications and starts Step Function execution"
+      Runtime: python3.12
+      Handler: start_step_function.lambda_handler
+      Timeout: 60
+      MemorySize: 256
+      Role: !GetAtt StartStepFunctionRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref StartStepFunctionCodeKey
+      Environment:
+        Variables:
+          STEP_FUNCTION_ARN: !Ref InvoiceProcessingWorkflow
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  StartStepFunctionEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt DocumentEventQueue.Arn
+      FunctionName: !Ref StartStepFunctionLambda
+      Enabled: true
+      BatchSize: 10
+      MaximumBatchingWindowInSeconds: 60
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  TableSanityCheckLambda:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - TableSanityCheckLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-table-sanity-check"
+      Description: "Detects and validates table structure in PDF invoices using AWS Textract"
+      Runtime: python3.12
+      Handler: table_sanity_check.lambda_handler
+      Timeout: 60
+      MemorySize: 512
+      Role: !GetAtt LambdaProcessorRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref TableSanityCheckCodeKey
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  ExtractTableDataLambda:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - ExtractTableDataLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-extract-table-data"
+      Description: "Extracts table cells, formats rows, and writes invoice data into DynamoDB"
+      Runtime: python3.12
+      Handler: extract_table_data.lambda_handler
+      Timeout: 120
+      MemorySize: 512
+      Role: !GetAtt LambdaProcessorRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref ExtractTableDataCodeKey
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref InvoiceRecordsTable
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  # -----------------------------------------------------------------------------------------
+  # 8. Orchestration: AWS Step Functions State Machine
+  # -----------------------------------------------------------------------------------------
+  InvoiceProcessingWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${AWS::StackName}-InvoiceProcessingWorkflow"
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      StateMachineType: STANDARD
+      TracingConfiguration:
+        Enabled: true
+      LoggingConfiguration:
+        Level: ALL
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt StepFunctionsLogGroup.Arn
+      DefinitionString: !Sub
+        - |
+          {
+            "Comment": "Production Invoice Processing Workflow",
+            "StartAt": "Validate Table Information",
+            "States": {
+              "Validate Table Information": {
+                "Type": "Task",
+                "Resource": "${TableSanityCheckArn}",
+                "ResultPath": "$.validation_result",
+                "Retry": [
+                  {
+                    "ErrorEquals": [
+                      "Lambda.ServiceException",
+                      "Lambda.AWSLambdaException",
+                      "Lambda.SdkClientException",
+                      "Lambda.TooManyRequestsException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 3,
+                    "BackoffRate": 2,
+                    "JitterStrategy": "FULL"
+                  }
+                ],
+                "Next": "If validated"
+              },
+              "If validated": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "And": [
+                      {
+                        "Variable": "$.validation_result.statusCode",
+                        "NumericEquals": 200
+                      },
+                      {
+                        "Variable": "$.validation_result.body.tables_count",
+                        "NumericGreaterThanEquals": 1
+                      },
+                      {
+                        "Variable": "$.validation_result.body.tables_count",
+                        "NumericLessThanEquals": 1
+                      }
+                    ],
+                    "Next": "Extract and Store Table Data"
+                  }
+                ],
+                "Default": "Error : Invalid invoice"
+              },
+              "Error : Invalid invoice": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::sns:publish",
+                "Parameters": {
+                  "TopicArn": "${InvalidInvoiceTopicArn}",
+                  "Message.$": "States.JsonToString($)"
+                },
+                "Next": "Fail"
+              },
+              "Fail": {
+                "Type": "Fail",
+                "Error": "InvoiceProcessingFailed",
+                "Cause": "The invoice structure is invalid or data storage failed."
+              },
+              "Extract and Store Table Data": {
+                "Type": "Task",
+                "Resource": "${ExtractTableDataArn}",
+                "ResultPath": "$.extraction_result",
+                "Retry": [
+                  {
+                    "ErrorEquals": [
+                      "Lambda.ServiceException",
+                      "Lambda.AWSLambdaException",
+                      "Lambda.SdkClientException",
+                      "Lambda.TooManyRequestsException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 3,
+                    "BackoffRate": 2,
+                    "JitterStrategy": "FULL"
+                  }
+                ],
+                "Next": "If data stored successfully"
+              },
+              "If data stored successfully": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.extraction_result.statusCode",
+                    "NumericEquals": 200,
+                    "Next": "Success"
+                  }
+                ],
+                "Default": "Error: Failure while storing data"
+              },
+              "Error: Failure while storing data": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::sns:publish",
+                "Parameters": {
+                  "TopicArn": "${DataStorageFailureTopicArn}",
+                  "Message.$": "States.JsonToString($)"
+                },
+                "Next": "Fail"
+              },
+              "Success": {
+                "Type": "Succeed"
+              }
+            }
+          }
+        - TableSanityCheckArn: !GetAtt TableSanityCheckLambda.Arn
+          ExtractTableDataArn: !GetAtt ExtractTableDataLambda.Arn
+          InvalidInvoiceTopicArn: !Ref InvalidInvoiceErrorTopic
+          DataStorageFailureTopicArn: !Ref DataStorageFailureTopic
+      Tags:
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  # -----------------------------------------------------------------------------------------
+  # 9. Optional Networking: Supporting VPC, Subnets, and Gateways (Enabled via EnableVPC=true)
+  # -----------------------------------------------------------------------------------------
+  VPC:
+    Type: AWS::EC2::VPC
+    Condition: CreateVpcCondition
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpc"
+        - Key: Project
+          Value: invoice-processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Condition: CreateVpcCondition
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-igw"
+        - Key: Project
+          Value: invoice-processor
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Condition: CreateVpcCondition
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: CreateVpcCondition
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet1Cidr
+      AvailabilityZone: !Select [0, !Ref AvailabilityZones]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-1"
+        - Key: Project
+          Value: invoice-processor
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: CreateVpcCondition
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet2Cidr
+      AvailabilityZone: !Select [1, !Ref AvailabilityZones]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-2"
+        - Key: Project
+          Value: invoice-processor
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: CreateVpcCondition
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet1Cidr
+      AvailabilityZone: !Select [0, !Ref AvailabilityZones]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-subnet-1"
+        - Key: Project
+          Value: invoice-processor
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: CreateVpcCondition
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet2Cidr
+      AvailabilityZone: !Select [1, !Ref AvailabilityZones]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-subnet-2"
+        - Key: Project
+          Value: invoice-processor
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateVpcCondition
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-rt"
+        - Key: Project
+          Value: invoice-processor
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Condition: CreateVpcCondition
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVpcCondition
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVpcCondition
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateVpcCondition
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-rt"
+        - Key: Project
+          Value: invoice-processor
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVpcCondition
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVpcCondition
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+# -----------------------------------------------------------------------------------------
+# Outputs: Key Resources & Cross-Stack References
+# -----------------------------------------------------------------------------------------
+Outputs:
+  InvoicesBucketName:
+    Description: "Name of the invoices S3 bucket"
+    Value: !Ref InvoicesBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-InvoicesBucketName"
+
+  InvoicesBucketArn:
+    Description: "ARN of the invoices S3 bucket"
+    Value: !GetAtt InvoicesBucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-InvoicesBucketArn"
+
+  DocumentEventQueueUrl:
+    Description: "URL of the SQS document event queue"
+    Value: !Ref DocumentEventQueue
+    Export:
+      Name: !Sub "${AWS::StackName}-DocumentEventQueueUrl"
+
+  DocumentEventQueueArn:
+    Description: "ARN of the SQS document event queue"
+    Value: !GetAtt DocumentEventQueue.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-DocumentEventQueueArn"
+
+  DocumentEventDLQUrl:
+    Description: "URL of the SQS document event dead letter queue"
+    Value: !Ref DocumentEventDLQ
+    Export:
+      Name: !Sub "${AWS::StackName}-DocumentEventDLQUrl"
+
+  InvoiceRecordsTableName:
+    Description: "Name of the DynamoDB table storing invoice records"
+    Value: !Ref InvoiceRecordsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-InvoiceRecordsTableName"
+
+  InvoiceRecordsTableArn:
+    Description: "ARN of the DynamoDB table storing invoice records"
+    Value: !GetAtt InvoiceRecordsTable.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-InvoiceRecordsTableArn"
+
+  StepFunctionArn:
+    Description: "ARN of the Step Function workflow"
+    Value: !Ref InvoiceProcessingWorkflow
+    Export:
+      Name: !Sub "${AWS::StackName}-StepFunctionArn"
+
+  InvalidInvoiceErrorTopicArn:
+    Description: "ARN of SNS topic for invalid invoice notifications"
+    Value: !Ref InvalidInvoiceErrorTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-InvalidInvoiceErrorTopicArn"
+
+  DataStorageFailureTopicArn:
+    Description: "ARN of SNS topic for data storage failure notifications"
+    Value: !Ref DataStorageFailureTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-DataStorageFailureTopicArn"
+
+  VpcId:
+    Description: "ID of the optional VPC (if enabled)"
+    Value: !If [CreateVpcCondition, !Ref VPC, "N/A"]
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcId"
+

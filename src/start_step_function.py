@@ -9,7 +9,10 @@ step_function_arn = os.getenv("STEP_FUNCTION_ARN")
 
 def lambda_handler(event, context):
     execution_arns = []
+    batch_item_failures = []
+
     for record in event.get("Records", []):
+        record_id = record.get("messageId")
         try:
             message_body = record["body"]
             print(f"SQS Event Body: {message_body}")
@@ -36,9 +39,12 @@ def lambda_handler(event, context):
             print(f"Started Step Function execution: {response['executionArn']}")
 
         except Exception as e:
-            print(f"Error processing record {record.get('messageId', 'unknown')}: {str(e)}")
+            print(f"Error processing record {record_id or 'unknown'}: {str(e)}")
+            if record_id:
+                batch_item_failures.append({"itemIdentifier": record_id})
 
     return {
         "statusCode": 200,
+        "batchItemFailures": batch_item_failures,
         "executionArns": execution_arns,
     }
