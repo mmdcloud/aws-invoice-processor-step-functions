@@ -218,6 +218,7 @@ Resources:
     Properties:
       TopicName: !Sub "${AWS::StackName}-invalid-invoice-error-topic"
       DisplayName: "Invoice Processing Pipeline - Invalid Invoice Notification"
+      KmsMasterKeyId: alias/aws/sns
       Tags:
         - Key: Project
           Value: invoice-processor
@@ -236,6 +237,7 @@ Resources:
     Properties:
       TopicName: !Sub "${AWS::StackName}-data-storage-failure-topic"
       DisplayName: "Invoice Processing Pipeline - Storage Failure Notification"
+      KmsMasterKeyId: alias/aws/sns
       Tags:
         - Key: Project
           Value: invoice-processor
@@ -258,6 +260,18 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
+          - Sid: EnforceTLSRequestsOnly
+            Effect: Deny
+            Principal: "*"
+            Action:
+              - SNS:Publish
+              - SNS:Subscribe
+            Resource:
+              - !Ref InvalidInvoiceErrorTopic
+              - !Ref DataStorageFailureTopic
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
           - Sid: AllowAccountOwner
             Effect: Allow
             Principal:
@@ -326,11 +340,32 @@ Resources:
       QueueName: !Sub "${AWS::StackName}-document-event-dlq"
       MessageRetentionPeriod: 1209600 # 14 days
       SqsManagedSseEnabled: true
+      RedriveAllowPolicy:
+        redrivePermission: byQueue
+        sourceQueueArns:
+          - !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-document-event-queue"
       Tags:
         - Key: Project
           Value: invoice-processor
         - Key: Environment
           Value: !Ref Environment
+
+  DocumentEventDLQPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref DocumentEventDLQ
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTLSRequestsOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "sqs:*"
+            Resource: !GetAtt DocumentEventDLQ.Arn
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
 
   DocumentEventQueue:
     Type: AWS::SQS::Queue
@@ -359,6 +394,14 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
+          - Sid: EnforceTLSRequestsOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "sqs:*"
+            Resource: !GetAtt DocumentEventQueue.Arn
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
           - Sid: AllowS3EventsToSendMessages
             Effect: Allow
             Principal:
@@ -411,6 +454,24 @@ Resources:
           Value: invoice-processor
         - Key: Environment
           Value: !Ref Environment
+
+  InvoicesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref InvoicesBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTLSRequestsOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt InvoicesBucket.Arn
+              - !Sub "${InvoicesBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
 
   # -----------------------------------------------------------------------------------------
   # 5. Observability: CloudWatch Log Groups
@@ -502,6 +563,15 @@ Resources:
                 Action:
                   - states:StartExecution
                 Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${AWS::StackName}-InvoiceProcessingWorkflow"
+        - PolicyName: XRayTracingAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: "*"
       Tags:
         - Key: Project
           Value: invoice-processor
@@ -563,6 +633,15 @@ Resources:
                   - dynamodb:UpdateItem
                   - dynamodb:Query
                 Resource: !GetAtt InvoiceRecordsTable.Arn
+        - PolicyName: XRayTracingAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: "*"
       Tags:
         - Key: Project
           Value: invoice-processor
@@ -619,6 +698,17 @@ Resources:
                   - logs:DescribeResourcePolicies
                   - logs:DescribeLogGroups
                 Resource: "*"
+        - PolicyName: XRayTracingAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: "*"
       Tags:
         - Key: Project
           Value: invoice-processor
@@ -639,6 +729,8 @@ Resources:
       Handler: start_step_function.lambda_handler
       Timeout: 60
       MemorySize: 256
+      TracingConfig:
+        Mode: Active
       Role: !GetAtt StartStepFunctionRole.Arn
       Code:
         S3Bucket: !Ref LambdaCodeBucket
@@ -674,6 +766,8 @@ Resources:
       Handler: table_sanity_check.lambda_handler
       Timeout: 60
       MemorySize: 512
+      TracingConfig:
+        Mode: Active
       Role: !GetAtt LambdaProcessorRole.Arn
       Code:
         S3Bucket: !Ref LambdaCodeBucket
@@ -695,6 +789,8 @@ Resources:
       Handler: extract_table_data.lambda_handler
       Timeout: 120
       MemorySize: 512
+      TracingConfig:
+        Mode: Active
       Role: !GetAtt LambdaProcessorRole.Arn
       Code:
         S3Bucket: !Ref LambdaCodeBucket

@@ -1,7 +1,26 @@
 data "aws_caller_identity" "current" {}
 
-# SNS Topic Policy allowing the account owner and Step Functions
+# SNS Topic Policy allowing the account owner, Step Functions, and enforcing TLS
 data "aws_iam_policy_document" "sns_topic_policy_document" {
+  statement {
+    sid     = "EnforceTLSRequestsOnly"
+    effect  = "Deny"
+    actions = [
+      "SNS:Publish",
+      "SNS:Subscribe"
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    resources = [aws_sns_topic.topic.arn]
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+
   statement {
     sid     = "AllowAccountOwner"
     effect  = "Allow"
@@ -44,9 +63,10 @@ resource "aws_sns_topic_policy" "sns_topic_policy" {
   policy = data.aws_iam_policy_document.sns_topic_policy_document.json
 }
 
-# SNS Topic for notifying users about the state changes in MediaConvert Job
+# SNS Topic for pipeline error notifications
 resource "aws_sns_topic" "topic" {
-  name = var.topic_name
+  name              = var.topic_name
+  kms_master_key_id = var.kms_master_key_id
   tags = {
     Name = var.topic_name
   }
