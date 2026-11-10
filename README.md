@@ -17,6 +17,7 @@ The infrastructure provides **100% feature-parity across dual Infrastructure-as-
 
 - [Architectural Overview](#-architectural-overview)
 - [Workflow State Machine](#-workflow-state-machine)
+- [Visual Verification & AWS Console Screenshots](#-visual-verification--aws-console-screenshots)
 - [Production Hardening & Reliability Features](#-production-hardening--reliability-features)
 - [Repository Structure](#-repository-structure)
 - [Component Specifications](#-component-specifications)
@@ -154,6 +155,81 @@ stateDiagram-v2
     ExecutionFail --> [*]
 ```
 
+### Live Step Functions State Machine Execution (AWS Console)
+
+The visual graph view from the AWS Step Functions console captures a live execution where an uploaded invoice is validated, tabular data is extracted via AWS Textract, and records are persisted into DynamoDB with green success checkpoints across all tasks:
+
+![Step Functions Graph View - Live Execution Flow](screenshots/Screenshot%20from%202026-11-10%2007-41-24.png)
+*Figure 1: AWS Step Functions visual execution graph with real-time green state progress.*
+
+---
+
+## 📸 Visual Verification & AWS Console Screenshots
+
+This section presents full photographic evidence of the pipeline deployment, ingestion, orchestration, and persistence across the AWS Management Console:
+
+### 1. Infrastructure Deployment & Terraform Stack Outputs
+Confirmation of the Terraform execution completing with **64 resources created** without errors, exposing all module endpoints, S3 bucket names, SQS queue URLs, SNS topic ARNs, and the Step Functions workflow ARN.
+
+![Terraform Apply Output](screenshots/Screenshot%20from%202026-11-10%2007-37-18.png)
+*Figure 2: Successful Terraform apply output displaying all deployed resource ARNs and configuration attributes.*
+
+---
+
+### 2. S3 Storage & Lambda Code Packaging Buckets
+Amazon S3 Console showing the provisioned general-purpose buckets: the primary document intake bucket (`invoices-f90026bb9426ea3d`) alongside the dedicated code artifact buckets for each Lambda function.
+
+![Amazon S3 Buckets in Console](screenshots/Screenshot%20from%202026-11-10%2007-37-48.png)
+*Figure 3: Amazon S3 console displaying the provisioned ingestion and deployment artifact buckets in us-east-1.*
+
+---
+
+### 3. Invoice Document Ingestion (S3 Upload)
+Confirmation of the sample `invoice.pdf` uploaded successfully to `s3://invoices-f90026bb9426ea3d/`, which immediately emits an `s3:ObjectCreated:*` event notification to Amazon SQS.
+
+![S3 Document Upload Succeeded](screenshots/Screenshot%20from%202026-11-10%2007-38-28.png)
+*Figure 4: Amazon S3 object upload confirmation dialog for invoice.pdf.*
+
+---
+
+### 4. Step Functions Execution History
+The AWS Step Functions console showing the execution `a01ed0b2-5e48-4ddb-a85e-577be34396fe` triggered automatically by the `start-step-function` Lambda consumer, completing with status **Succeeded** in just 5.84 seconds.
+
+![Step Functions Execution History](screenshots/Screenshot%20from%202026-11-10%2007-41-11.png)
+*Figure 5: AWS Step Functions execution console confirming Succeeded status in under 6 seconds.*
+
+---
+
+### 5. Step Functions Workflow Graph Path
+Live graph inspector highlighting the happy path taken by the state machine: `Validate Table Information` $\rightarrow$ `If validated` (Choice) $\rightarrow$ `Extract and Store Table Data` $\rightarrow$ `If data stored successfully` (Choice) $\rightarrow$ `Success`.
+
+![Step Functions Graph Execution Path](screenshots/Screenshot%20from%202026-11-10%2007-41-24.png)
+*Figure 6: Real-time visual graph rendering in the AWS Management Console showing all successful step transitions.*
+
+---
+
+### 6. DynamoDB Table Overview (`invoice-records`)
+Amazon DynamoDB console demonstrating the active `invoice-records` table with **On-Demand** billing mode, partition key `RecordId` (String), and sort key `filename` (String).
+
+![DynamoDB Active Table Console](screenshots/Screenshot%20from%202026-11-10%2007-45-19.png)
+*Figure 7: Amazon DynamoDB Management Console showing the healthy, active invoice-records table.*
+
+---
+
+### 7. Processed Item Record Scan in DynamoDB
+Item exploration in the DynamoDB console showing the scanned record for `invoice.pdf` with status marked as `COMPLETED` and structured table arrays returned.
+
+![DynamoDB Items Returned](screenshots/Screenshot%20from%202026-11-10%2007-45-42.png)
+*Figure 8: DynamoDB item scan result showing the processed invoice record with COMPLETED execution status.*
+
+---
+
+### 8. Deep-Dive Item Attributes & Extracted Table Data
+Detailed attribute inspector for `invoice.pdf` showing parsed invoice rows, individual line items (*Cloud Infrastructure Architecture Migration*, *Continuous Delivery Pipeline Setup*, *Database Optimization*, etc.), **99.66% OCR confidence**, and the auto-calculated epoch **TimeToExist (TTL)**.
+
+![Detailed DynamoDB Item View](screenshots/Screenshot%20from%202026-11-10%2007-46-05.png)
+*Figure 9: In-depth DynamoDB attribute view showing structured invoice line items, Textract OCR confidence, and 30-day epoch TTL.*
+
 ---
 
 ## 🛡️ Production Hardening & Reliability Features
@@ -189,6 +265,15 @@ stateDiagram-v2
 ├── docs/                                  # Architecture diagrams and documentation assets
 │   ├── infra.dot                          # Graphviz infrastructure diagram source
 │   └── infra.svg                          # Vector architecture diagram
+├── screenshots/                           # Visual proof of deployment, execution & AWS Console state
+│   ├── Screenshot from 2026-11-10 07-37-18.png  # Terraform apply completion & stack outputs
+│   ├── Screenshot from 2026-11-10 07-37-48.png  # Amazon S3 general purpose buckets in console
+│   ├── Screenshot from 2026-11-10 07-38-28.png  # S3 sample invoice PDF upload confirmation
+│   ├── Screenshot from 2026-11-10 07-41-11.png  # Step Functions execution history (Succeeded)
+│   ├── Screenshot from 2026-11-10 07-41-24.png  # Step Functions visual graph view of execution
+│   ├── Screenshot from 2026-11-10 07-45-19.png  # DynamoDB active invoice-records table overview
+│   ├── Screenshot from 2026-11-10 07-45-42.png  # DynamoDB returned item scan with COMPLETED status
+│   └── Screenshot from 2026-11-10 07-46-05.png  # Detailed DynamoDB item attributes, OCR JSON & TTL
 ├── src/                                   # Lambda Function Source Code (Python 3.12)
 │   ├── extract_table_data.py              # OCR extraction, row formatting & DynamoDB persistence
 │   ├── start_step_function.py             # SQS batch consumer with failure reporting & execution starter
@@ -287,13 +372,13 @@ cd ..
 Edit `terraform/terraform.tfvars` with your deployment values:
 
 ```hcl
-region             = "ap-southeast-2"
+region             = "us-east-1"
 notification_email = "alerts-team@yourcompany.com"
 
 # Subnet CIDR allocations for optional VPC networking
 public_subnets  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
 private_subnets = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
-azs             = ["ap-southeast-2a", "ap-southeast-2b", "ap-southeast-2c"]
+azs             = ["us-east-1a", "us-east-1b", "us-east-1c"]
 ```
 
 ### Step 3: Initialize, Plan, and Deploy
@@ -312,6 +397,14 @@ terraform plan -out=tfplan
 # Apply the infrastructure
 terraform apply tfplan
 ```
+
+Upon apply completion, Terraform outputs all provisioned resource identifiers and ARNs:
+
+![Terraform Output Terminal](screenshots/Screenshot%20from%202026-11-10%2007-37-18.png)
+
+Verify the newly created buckets in your AWS S3 Console:
+
+![S3 Console Buckets List](screenshots/Screenshot%20from%202026-11-10%2007-37-48.png)
 
 ### Step 4: Confirm SNS Email Subscription
 AWS will send a subscription confirmation email to the address configured in `notification_email`. **Click the "Confirm subscription" link in your email inbox** to activate failure alert notifications.
@@ -335,14 +428,14 @@ chmod +x deploy.sh
 ./deploy.sh \
   --email "alerts-team@yourcompany.com" \
   --bucket "my-company-deployment-artifacts" \
-  --region "ap-southeast-2" \
+  --region "us-east-1" \
   --env "prod"
 ```
 
 ### Method B: Manual Deployment via AWS CLI
 ```bash
 # 1. Create a deployment artifact bucket (if not already existing)
-aws s3 mb s3://my-company-deployment-artifacts --region ap-southeast-2
+aws s3 mb s3://my-company-deployment-artifacts --region us-east-1
 
 # 2. Package and upload Lambda code
 cd src
@@ -363,7 +456,7 @@ aws cloudformation deploy \
       TableSanityCheckCodeKey=table_sanity_check.zip \
       ExtractTableDataCodeKey=extract_table_data.zip \
   --capabilities CAPABILITY_NAMED_IAM \
-  --region ap-southeast-2
+  --region us-east-1
 ```
 
 ---
@@ -383,6 +476,8 @@ aws cloudformation deploy \
    aws s3 cp sample_invoice.pdf s3://${INVOICE_BUCKET}/sample_invoice.pdf
    ```
 
+   ![S3 Upload Dialog](screenshots/Screenshot%20from%202026-11-10%2007-38-28.png)
+
 3. Monitor the Step Function execution:
    ```bash
    STATE_MACHINE_ARN=$(terraform -chdir=terraform output -raw step_function_arn)
@@ -393,6 +488,14 @@ aws cloudformation deploy \
      --max-items 1
    ```
 
+   The AWS Step Functions console confirms completion with status `Succeeded`:
+
+   ![Step Functions Execution Status](screenshots/Screenshot%20from%202026-11-10%2007-41-11.png)
+
+   Inspecting the execution graph confirms that the Choice state evaluated the table count as 1 and invoked `Extract and Store Table Data`:
+
+   ![Step Functions State Machine Graph](screenshots/Screenshot%20from%202026-11-10%2007-41-24.png)
+
 4. Verify table data is saved to DynamoDB:
    ```bash
    DYNAMO_TABLE=$(terraform -chdir=terraform output -raw dynamodb_table_name)
@@ -401,6 +504,18 @@ aws cloudformation deploy \
      --table-name "${DYNAMO_TABLE}" \
      --projection-expression "RecordId, filename, processed_time, tables"
    ```
+
+   Review the table in the DynamoDB console:
+
+   ![DynamoDB Active Table](screenshots/Screenshot%20from%202026-11-10%2007-45-19.png)
+
+   Verify the scanned items returned with status `COMPLETED`:
+
+   ![DynamoDB Items Scanned](screenshots/Screenshot%20from%202026-11-10%2007-45-42.png)
+
+   Inspect the structured data extracted by Textract and persisted in DynamoDB:
+
+   ![DynamoDB Item Detailed Inspector](screenshots/Screenshot%20from%202026-11-10%2007-46-05.png)
 
 ---
 
